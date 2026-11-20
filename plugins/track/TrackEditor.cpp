@@ -147,14 +147,14 @@ TrackEditor::~TrackEditor()
 
 void TrackEditor::setupRow (ParamRow& row, const char* paramId, const juce::String& text)
 {
+    addAndMakeVisible (row.label);
+    addAndMakeVisible (row.slider);   // first, so the slider's text box is created with our look
     row.label.setText (text, juce::dontSendNotification);
     row.label.setFont (theme::font (12.0f));
     row.label.setColour (juce::Label::textColourId, theme::textDim);
     row.slider.setSliderStyle (juce::Slider::LinearHorizontal);
     row.slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 74, 20);
     row.attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (processor.state(), paramId, row.slider);
-    addAndMakeVisible (row.label);
-    addAndMakeVisible (row.slider);
 }
 
 void TrackEditor::setChoice (const char* paramId, int index)
@@ -331,11 +331,11 @@ void TrackEditor::resized()
 
     // Knob card.
     auto k = knobCard.reduced (18);
-    amountArea = juce::Rectangle<int> (k.getX(), k.getY(), 116, 116);
-    spaceArea = juce::Rectangle<int> (k.getRight() - 116, k.getY(), 116, 116);
+    amountArea = juce::Rectangle<int> (k.getX() - 4, k.getY(), 112, 112);
+    spaceArea = juce::Rectangle<int> (k.getRight() - 108, k.getY(), 112, 112);
     amountKnob.setBounds (amountArea);
     spaceKnob.setBounds (spaceArea);
-    linkButton.setBounds (k.getCentreX() - 24, k.getY() + 40, 48, 32);
+    linkButton.setBounds (k.getCentreX() - 22, k.getY() + 41, 44, 30);
 
     int y = k.getY() + 186;
     speedSlider.setBounds (k.getX(), y + 18, k.getWidth(), 20);
@@ -411,7 +411,7 @@ void TrackEditor::paint (juce::Graphics& g)
         g.drawText (u8 ("Спектр"), t.removeFromLeft (70), juce::Justification::centredLeft);
         g.setFont (theme::font (12.0f));
         auto legend = [&] (juce::Colour c, const juce::String& text, bool dashed) {
-            auto item = t.removeFromLeft (170);
+            auto item = t.removeFromLeft (juce::roundToInt (juce::GlyphArrangement::getStringWidth (theme::font (12.0f), text)) + 40);
             g.setColour (c);
             if (dashed)
                 for (int i = 0; i < 2; ++i)

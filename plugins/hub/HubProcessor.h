@@ -58,7 +58,8 @@ public:
     /** True while another Hub in the project holds the bus. */
     bool isDuplicate() const noexcept                      { return duplicate.load(); }
 
-    /** Share of master energy that survives a mono fold-down, 0..1. */
+    /** Mono fold-down power relative to the stereo power (Mid / (Mid + Side)), 0..1.
+        1 = nothing lost in mono, 0.5 = 3 dB quieter. */
     float monoCompatibility() const noexcept               { return mono.load(); }
 
 private:

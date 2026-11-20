@@ -18,8 +18,11 @@ namespace
 
     juce::String hzText (float hz)
     {
-        return hz >= 1000.0f ? juce::String (hz / 1000.0f, hz >= 10000.0f ? 0 : 1) + u8 (" кГц")
-                             : juce::String ((int) std::lround (hz)) + u8 (" Гц");
+        if (hz >= 10000.0f)
+            return juce::String (juce::roundToInt (hz / 1000.0f)) + u8 (" кГц");
+        if (hz >= 1000.0f)
+            return juce::String (std::round (hz / 100.0f) / 10.0f) + u8 (" кГц");
+        return juce::String (juce::roundToInt (hz / 10.0f) * 10) + u8 (" Гц");
     }
 
     juce::String dbText (float db)
@@ -78,7 +81,7 @@ void HubCanvas::paintMap (juce::Graphics& g, juce::Rectangle<float> area)
     auto labels = area.removeFromBottom (16.0f);
     const float labelW = 110.0f;
     const int n = (int) tracks.size();
-    const float rowH = juce::jmin (34.0f, area.getHeight() / (float) n);
+    const float rowH = juce::jmin (44.0f, area.getHeight() / (float) n);
     const float cellW = (area.getWidth() - labelW) / (float) kNumBands;
 
     for (int t = 0; t < n; ++t)
@@ -118,9 +121,8 @@ void HubCanvas::paintMap (juce::Graphics& g, juce::Rectangle<float> area)
     g.setFont (theme::mono (10.5f));
     for (int b : { 0, 6, 12, 18, 24, 31 })
     {
-        const float cx = area.getX() + labelW + cellW * ((float) b + 0.5f);
-        const float hz = layout.centreHz[(size_t) b];
-        g.drawText (hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + "k" : juce::String ((int) hz),
+        const float cx = juce::jmin (area.getRight() - 24.0f, area.getX() + labelW + cellW * ((float) b + 0.5f));
+        g.drawText (shortHz (layout.centreHz[(size_t) b]),
                     juce::Rectangle<float> (cx - 24.0f, labels.getY(), 48.0f, 16.0f), juce::Justification::centred);
     }
 }
@@ -290,8 +292,7 @@ void HubCanvas::paintStereo (juce::Graphics& g, juce::Rectangle<float> area)
     g.setFont (theme::mono (10.5f));
     for (int b : { 0, 6, 12, 18, 24, 31 })
     {
-        const float hz = layout.centreHz[(size_t) b];
-        g.drawText (hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + "k" : juce::String ((int) hz),
+        g.drawText (shortHz (layout.centreHz[(size_t) b]),
                     freqLabels.withY (rowY (b)).withHeight (rowH), juce::Justification::centredRight);
     }
     g.setFont (theme::font (11.0f));
@@ -392,6 +393,7 @@ HubEditor::HubEditor (HubProcessor& p)
 
     for (auto* s : { &totalSlider, &spaceSlider })
     {
+        addAndMakeVisible (*s);   // first, so the text box is created with our look
         s->setSliderStyle (juce::Slider::LinearHorizontal);
         s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 22);
         s->setDoubleClickReturnValue (true, 100.0);
@@ -604,19 +606,19 @@ void HubEditor::paint (juce::Graphics& g)
     g.setColour (theme::space);
     g.drawText ("Space Amount", 620, 22, 96, 24, juce::Justification::centredLeft);
 
-    // Mono meter.
-    const float mono = processor.monoCompatibility();
+    // Mono meter: how much quieter the mix gets when folded to mono.
+    const float lossDb = 10.0f * std::log10 (juce::jmax (1.0e-4f, processor.monoCompatibility()));
     const juce::Rectangle<float> meter (1090.0f, 38.0f, 160.0f, 6.0f);
     g.setColour (theme::textDim);
     g.setFont (theme::font (11.0f));
-    g.drawText (u8 ("Моно-совместимость"), 1090, 18, 110, 16, juce::Justification::centredLeft);
+    g.drawText (u8 ("Потеря в моно"), 1090, 18, 100, 16, juce::Justification::centredLeft);
     g.setColour (theme::text);
     g.setFont (theme::mono (12.0f));
-    g.drawText (juce::String (juce::roundToInt (mono * 100.0f)) + "%", 1200, 18, 50, 16, juce::Justification::centredRight);
+    g.drawText (dbText (-lossDb), 1180, 18, 70, 16, juce::Justification::centredRight);
     g.setColour (theme::track);
     g.fillRoundedRectangle (meter, 3.0f);
-    g.setColour (mono < 0.6f ? theme::eq : theme::space);
-    g.fillRoundedRectangle (meter.withWidth (meter.getWidth() * juce::jlimit (0.0f, 1.0f, mono)), 3.0f);
+    g.setColour (lossDb < -3.5f ? theme::eq : theme::space);
+    g.fillRoundedRectangle (meter.withWidth (meter.getWidth() * juce::jlimit (0.02f, 1.0f, 1.0f + lossDb / 6.0f)), 3.0f);
 
     // Sidebar: the tracks.
     g.setColour (theme::panelDeep);

@@ -24,3 +24,22 @@ if (FREQFREAKS_BUILD_PLUGINS)
             "$<TARGET_FILE_DIR:FreqFreaksTrack_VST3>/../../../FreqFreaks Track.vst3"
             "$<TARGET_FILE_DIR:FreqFreaksHub_VST3>/../../../FreqFreaks Hub.vst3")
 endif()
+
+# Renders the real editors to PNG after a short demo mix (no DAW needed).
+if (FREQFREAKS_BUILD_PLUGINS)
+    juce_add_console_app (freqfreaks_snapshot PRODUCT_NAME "freqfreaks_snapshot")
+    target_sources (freqfreaks_snapshot PRIVATE
+        Snapshot.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/track/TrackProcessor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/track/TrackEditor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/hub/HubProcessor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/hub/HubEditor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/common/BandViews.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/common/LookAndFeel.cpp)
+    target_include_directories (freqfreaks_snapshot PRIVATE ${PROJECT_SOURCE_DIR}/plugins)
+    target_compile_definitions (freqfreaks_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (freqfreaks_snapshot PRIVATE
+        freqfreaks_core
+        juce::juce_audio_utils
+        juce::juce_recommended_config_flags)
+endif()

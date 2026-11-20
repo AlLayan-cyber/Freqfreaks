@@ -6,6 +6,17 @@
 namespace ff
 {
 
+juce::String shortHz (float hz)
+{
+    if (hz >= 10000.0f)
+        return juce::String (juce::roundToInt (hz / 1000.0f)) + "k";
+    if (hz >= 1000.0f)
+        return juce::String (std::round (hz / 100.0f) / 10.0f) + "k";
+    if (hz >= 100.0f)
+        return juce::String (juce::roundToInt (hz / 10.0f) * 10);
+    return juce::String (juce::roundToInt (hz));
+}
+
 float frequencyToX (float hz, juce::Rectangle<float> area) noexcept
 {
     const float t = std::log10 (juce::jlimit (20.0f, 20000.0f, hz) / 20.0f) / 3.0f;
@@ -209,10 +220,9 @@ void BudgetView::paint (juce::Graphics& g)
     g.setColour (theme::textDim);
     for (int b : { 0, 6, 12, 18, 24, 31 })
     {
-        const float hz = layout.centreHz[(size_t) b];
-        const auto text = hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + "k" : juce::String ((int) hz);
-        const float cx = area.getX() + slot * ((float) b + 0.5f);
-        g.drawText (text, juce::Rectangle<float> (cx - 24.0f, labels.getY(), 48.0f, labels.getHeight()), juce::Justification::centred);
+        const float cx = juce::jlimit (area.getX() + 24.0f, area.getRight() - 24.0f, area.getX() + slot * ((float) b + 0.5f));
+        g.drawText (shortHz (layout.centreHz[(size_t) b]), juce::Rectangle<float> (cx - 24.0f, labels.getY(), 48.0f, labels.getHeight()),
+                    juce::Justification::centred);
     }
 }
 

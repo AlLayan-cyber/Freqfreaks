@@ -9,6 +9,9 @@
 namespace ff
 {
 
+/** "30", "450", "1.1k", "18k" — compact frequency labels. */
+juce::String shortHz (float hz);
+
 /** Log-frequency mapping shared by every band view (20 Hz .. 20 kHz). */
 float frequencyToX (float hz, juce::Rectangle<float> area) noexcept;
 
