@@ -297,7 +297,7 @@ void TrackEditor::timerCallback()
     const auto bassHz = processor.state().getRawParameterValue (trackParams::bassMono)->load();
     spectrum.setData (own, processor.trackColour(), haveRef ? &ref : nullptr,
                       haveRef ? theme::trackColour (ref.colourArgb, refId) : theme::reference,
-                      haveRef ? juce::String::fromUTF8 (ref.name) : juce::String(), bassHz);
+                      haveRef ? juce::String::fromUTF8 (ref.name) : juce::String(), bassHz, &processor.bellBank());
     budget.setData (own);
     shownCompensationDb = own.compensationDb;
 

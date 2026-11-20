@@ -264,6 +264,28 @@ float BellBank::transferErrorDb (const BellArray& spaceCutDb, const BellArray& w
     return worst;
 }
 
+void BellBank::cutCurve (const BellArray& gains, const float* hz, float* cutDb, int numPoints) const noexcept
+{
+    std::array<BiquadCoeffs, kNumBells> coeffs {};
+    std::array<bool, kNumBells> active {};
+    for (int k = 0; k < kNumBells; ++k)
+    {
+        active[(size_t) k] = gains[(size_t) k] > 1.0e-3f;
+        if (active[(size_t) k])
+            coeffs[(size_t) k] = BiquadCoeffs::peaking (rate, fc[(size_t) k], qs[(size_t) k], -gains[(size_t) k]);
+    }
+
+    for (int i = 0; i < numPoints; ++i)
+    {
+        const double f = std::min ((double) hz[i], rate * 0.49);
+        double db = 0.0;
+        for (int k = 0; k < kNumBells; ++k)
+            if (active[(size_t) k])
+                db += coeffs[(size_t) k].magnitudeDb (f, rate);
+        cutDb[i] = (float) -db;
+    }
+}
+
 BandArray BellBank::response (const BellArray& gains) const noexcept
 {
     BandArray out {};

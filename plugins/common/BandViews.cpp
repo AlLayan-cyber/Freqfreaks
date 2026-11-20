@@ -60,10 +60,39 @@ void drawCard (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour topA
 }
 
 //==============================================================================
+SpectrumView::SpectrumView()
+{
+    for (int i = 0; i < kWavePoints; ++i)
+        waveHz[(size_t) i] = 20.0f * std::pow (1000.0f, (float) i / (float) (kWavePoints - 1));
+    peakCut.fill (0.0f);
+}
+
+juce::Rectangle<float> SpectrumView::plotArea() const
+{
+    return getLocalBounds().toFloat().withTrimmedBottom (18.0f).withTrimmedRight (34.0f);
+}
+
 void SpectrumView::setData (const bus::TrackData& ownData, juce::Colour ownCol,
                             const bus::TrackData* reference, juce::Colour referenceColour,
-                            juce::String referenceName, float bassMonoHz)
+                            juce::String referenceName, float bassMonoHz, const BellBank* bank)
 {
+    hasWave = bank != nullptr;
+    if (hasWave)
+    {
+        BellArray eqGains {}, spaceGains {};
+        std::copy (std::begin (ownData.eqBells), std::end (ownData.eqBells), eqGains.begin());
+        std::copy (std::begin (ownData.spaceBells), std::end (ownData.spaceBells), spaceGains.begin());
+        bank->cutCurve (spaceGains, waveHz.data(), spaceCut.data(), kWavePoints);
+        bank->cutCurve (eqGains, waveHz.data(), eqCut.data(), kWavePoints);
+
+        // Peak line: follows rises at once, falls about 4 dB per second (called ~30 times a second).
+        for (int i = 0; i < kWavePoints; ++i)
+        {
+            const float total = std::max (0.0f, spaceCut[(size_t) i]) + std::max (0.0f, eqCut[(size_t) i]);
+            peakCut[(size_t) i] = std::max (total, peakCut[(size_t) i] - 0.13f);
+        }
+    }
+
     own = ownData;
     ownColour = ownCol;
     hasReference = reference != nullptr;
@@ -117,8 +146,7 @@ juce::Path SpectrumView::curve (const float* levelsDb, juce::Rectangle<float> ar
 
 void SpectrumView::paint (juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
-    auto plot = bounds.withTrimmedBottom (18.0f);
+    auto plot = plotArea();
 
     // Bass Mono zone: only EQ works there.
     const float bx = frequencyToX (bassMono, plot);
@@ -163,6 +191,139 @@ void SpectrumView::paint (juce::Graphics& g)
         g.drawText (theme::u8 ("Выбери референс сверху — от него трек будет уступать место"),
                     plot, juce::Justification::centred);
     }
+
+    if (hasWave)
+        paintWave (g, plot);
+}
+
+void SpectrumView::paintWave (juce::Graphics& g, juce::Rectangle<float> plot)
+{
+    // The wave hangs from a 0 dB line at the top of the plot; 12 dB fills 45 % of its height.
+    const float top = plot.getY() + 1.0f;
+    const float depth = plot.getHeight() * 0.45f;
+    auto yFor = [&] (float cutDb) { return top + juce::jlimit (0.0f, kWaveRangeDb, cutDb) / kWaveRangeDb * depth; };
+    auto xFor = [&] (int i) { return frequencyToX (waveHz[(size_t) i], plot); };
+
+    // Space layer: 0 dB -> space cut.
+    juce::Path spacePath, eqPath, spaceEdge, eqEdge, peakLine;
+    spacePath.startNewSubPath (xFor (0), top);
+    eqPath.startNewSubPath (xFor (0), yFor (std::max (0.0f, spaceCut[0])));
+    for (int i = 0; i < kWavePoints; ++i)
+    {
+        const float s = std::max (0.0f, spaceCut[(size_t) i]);
+        const float total = s + std::max (0.0f, eqCut[(size_t) i]);
+        spacePath.lineTo (xFor (i), yFor (s));
+        if (i == 0)
+        {
+            spaceEdge.startNewSubPath (xFor (i), yFor (s));
+            eqEdge.startNewSubPath (xFor (i), yFor (total));
+            peakLine.startNewSubPath (xFor (i), yFor (peakCut[(size_t) i]));
+        }
+        else
+        {
+            spaceEdge.lineTo (xFor (i), yFor (s));
+            eqEdge.lineTo (xFor (i), yFor (total));
+            peakLine.lineTo (xFor (i), yFor (peakCut[(size_t) i]));
+        }
+    }
+    spacePath.lineTo (xFor (kWavePoints - 1), top);
+    spacePath.closeSubPath();
+
+    // EQ layer: space cut -> space + EQ cut.
+    for (int i = 0; i < kWavePoints; ++i)
+        eqPath.lineTo (xFor (i), yFor (std::max (0.0f, spaceCut[(size_t) i]) + std::max (0.0f, eqCut[(size_t) i])));
+    for (int i = kWavePoints - 1; i >= 0; --i)
+        eqPath.lineTo (xFor (i), yFor (std::max (0.0f, spaceCut[(size_t) i])));
+    eqPath.closeSubPath();
+
+    g.setColour (theme::space.withAlpha (0.30f));
+    g.fillPath (spacePath);
+    g.setColour (theme::eq.withAlpha (0.38f));
+    g.fillPath (eqPath);
+    g.setColour (theme::space.withAlpha (0.85f));
+    g.strokePath (spaceEdge, juce::PathStrokeType (1.2f));
+    g.setColour (theme::eq);
+    g.strokePath (eqEdge, juce::PathStrokeType (1.6f));
+
+    // Red edge where the release is not enough (per analysis band).
+    const auto& layout = BandLayout::get();
+    g.setColour (theme::conflict);
+    for (int b = 0; b < kNumBands; ++b)
+    {
+        if (own.restDb[b] <= 0.25f)
+            continue;
+        const float x0 = frequencyToX (layout.edgeHz[(size_t) b], plot);
+        const float x1 = frequencyToX (layout.edgeHz[(size_t) b + 1], plot);
+        juce::Path edge;
+        bool started = false;
+        for (int i = 0; i < kWavePoints; ++i)
+        {
+            const float x = xFor (i);
+            if (x < x0 || x > x1)
+                continue;
+            const float y = yFor (std::max (0.0f, spaceCut[(size_t) i]) + std::max (0.0f, eqCut[(size_t) i]));
+            if (! started)
+                edge.startNewSubPath (x, y), started = true;
+            else
+                edge.lineTo (x, y);
+        }
+        g.strokePath (edge, juce::PathStrokeType (2.5f));
+    }
+
+    // Peak line.
+    const float dashes[] = { 3.0f, 3.0f };
+    juce::Path dashedPeak;
+    juce::PathStrokeType (1.0f).createDashedStroke (dashedPeak, peakLine, dashes, 2);
+    g.setColour (theme::text.withAlpha (0.45f));
+    g.fillPath (dashedPeak);
+
+    // 0 dB line and the dB scale on the right.
+    g.setColour (theme::borderLight);
+    g.drawHorizontalLine ((int) top, plot.getX(), plot.getRight());
+    g.setFont (theme::mono (10.0f));
+    for (int db : { 0, 3, 6, 12 })
+    {
+        const float y = yFor ((float) db);
+        g.setColour (theme::gridLine);
+        g.drawHorizontalLine ((int) y, plot.getRight() - 6.0f, plot.getRight());
+        g.setColour (theme::textDim);
+        g.drawText (db == 0 ? juce::String ("0") : juce::String::fromUTF8 ("\u2212") + juce::String (db),
+                    juce::Rectangle<float> (plot.getRight() + 4.0f, y - 7.0f, 30.0f, 14.0f), juce::Justification::centredLeft);
+    }
+
+    // Hover readout.
+    if (hoverX >= plot.getX() && hoverX <= plot.getRight())
+    {
+        const float t = (hoverX - plot.getX()) / plot.getWidth();
+        const float hz = 20.0f * std::pow (1000.0f, t);
+        const int i = juce::jlimit (0, kWavePoints - 1, (int) std::lround (t * (float) (kWavePoints - 1)));
+        const float s = std::max (0.0f, spaceCut[(size_t) i]), e = std::max (0.0f, eqCut[(size_t) i]);
+
+        g.setColour (theme::text.withAlpha (0.35f));
+        g.drawVerticalLine ((int) hoverX, plot.getY(), plot.getBottom());
+
+        const auto text = shortHz (hz) + juce::String::fromUTF8 (" Hz  \u00b7  Space \u2212") + juce::String (s, 1)
+                          + juce::String::fromUTF8 ("  \u00b7  EQ \u2212") + juce::String (e, 1) + " dB";
+        const float w = 250.0f;
+        auto box = juce::Rectangle<float> (juce::jmin (hoverX + 8.0f, plot.getRight() - w), yFor (s + e) + 8.0f, w, 22.0f);
+        g.setColour (theme::raised.withAlpha (0.95f));
+        g.fillRoundedRectangle (box, 6.0f);
+        g.setColour (theme::text);
+        g.setFont (theme::font (12.0f));
+        g.drawText (text, box.reduced (8.0f, 0.0f), juce::Justification::centredLeft);
+    }
+}
+
+void SpectrumView::mouseMove (const juce::MouseEvent& e)
+{
+    hoverX = (float) e.x;
+    repaint();
+}
+
+void SpectrumView::mouseExit (const juce::MouseEvent&)
+{
+    hoverX = -1.0f;
+    repaint();
 }
 
 //==============================================================================

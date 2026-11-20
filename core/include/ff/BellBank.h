@@ -50,6 +50,9 @@ public:
     /** Exact cut (positive dB) of the whole bank at any frequency, for drawing. */
     float cutAt (float hz, const BellArray& gains) const noexcept;
 
+    /** Exact cut (positive dB) at many frequencies at once (designs each bell once). */
+    void cutCurve (const BellArray& gains, const float* hz, float* cutDb, int numPoints) const noexcept;
+
     /** Weights for the Space transfer band-passes (one per bell, 0 dB peak, same Q).
 
         Space cuts the Mid with the space bells (response H) and sends what it removed
