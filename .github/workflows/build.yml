@@ -17,7 +17,7 @@ jobs:
             os: ubuntu-24.04
             configure: -G Ninja -DCMAKE_BUILD_TYPE=Release
           - name: macos
-            os: macos-14
+            os: macos-latest
             configure: -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
           - name: windows
             os: windows-2022
