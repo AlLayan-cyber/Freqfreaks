@@ -209,13 +209,17 @@ int serveReference (const juce::String& trackPath, double seconds, const juce::F
     Source src (11, 0.03f, true);
     juce::AudioBuffer<float> buffer (2, kBlock);
     juce::MidiBuffer midi;
+    long blocks = 0;
     const auto start = juce::Time::getMillisecondCounterHiRes();
     while (juce::Time::getMillisecondCounterHiRes() - start < seconds * 1000.0)
     {
+        // No sleeping: macOS App Nap stretches sleeps of a windowless background process,
+        // which would make the published data go stale. Running faster than real time is fine,
+        // the other process always reads the latest analysis.
         src.fill (buffer);
         vocal->processBlock (buffer, midi);
-        juce::Thread::sleep (8);   // ~real time
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
+        if (++blocks % 64 == 0)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
     }
     return 0;
 }
