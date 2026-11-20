@@ -3,28 +3,64 @@ name: build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  linux:
-    runs-on: ubuntu-24.04
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release
+          - name: macos
+            os: macos-14
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          - name: windows
+            os: windows-2022
+            configure: -G "Visual Studio 17 2022" -A x64
+
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build ${{ matrix.configure }}
+
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --config Release --parallel 4
+
       - name: Test
-        run: cd build && ctest --output-on-failure
+        working-directory: build
+        run: ctest -C Release --output-on-failure
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          for p in Track Hub; do
+            art="build/plugins/FreqFreaks${p}_artefacts/Release"
+            for fmt in VST3 AU LV2; do
+              [ -d "$art/$fmt" ] && cp -R "$art/$fmt/." "dist/" || true
+            done
+            [ -d "$art/Standalone" ] && mkdir -p dist/Standalone && cp -R "$art/Standalone/." dist/Standalone/ || true
+          done
+          ls -la dist
+
       - uses: actions/upload-artifact@v4
         with:
-          name: freqfreaks-linux
-          path: |
-            build/plugins/FreqFreaksTrack_artefacts/Release/VST3
-            build/plugins/FreqFreaksHub_artefacts/Release/VST3
-            build/plugins/FreqFreaksTrack_artefacts/Release/LV2
-            build/plugins/FreqFreaksHub_artefacts/Release/LV2
+          name: FreqFreaks-${{ matrix.name }}
+          path: dist
