@@ -229,9 +229,11 @@ void testBellFit()
 
     std::array<bool, ff::kNumBells> allowed {};
     allowed.fill (true);
+    ff::BandArray ones {};
+    ones.fill (1.0f);
     ff::BellArray gains {};
     for (int i = 0; i < 4; ++i)   // warm-started frames converge further
-        bank.fit (cut, allowed, 12.0f, gains);
+        bank.fit (cut, ones, allowed, 12.0f, gains);
     const auto resp = bank.response (gains);
 
     double maxErr = 0.0;
@@ -239,14 +241,76 @@ void testBellFit()
         maxErr = std::max (maxErr, (double) std::abs (resp[(size_t) b] - cut[(size_t) b]));
     CHECK (maxErr < 1.0);
 
+    // The exact response used for drawing matches the band-centre model.
+    for (int b = 4; b < 28; ++b)
+        CHECK_NEAR (bank.cutAt (layout.centreHz[(size_t) b], gains), resp[(size_t) b], 0.05);
+
     allowed.fill (false);
     allowed[8] = true;
     ff::BellArray masked {};
-    bank.fit (cut, allowed, 12.0f, masked);
+    bank.fit (cut, ones, allowed, 12.0f, masked);
     for (int k = 0; k < ff::kNumBells; ++k)
         if (k != 8)
             CHECK (masked[(size_t) k] == 0.0f);
     CHECK (masked[8] > 0.5f);
+}
+
+void testRangeLimits()
+{
+    // The reported bug: Range from 140 Hz still cut the bass.
+    ff::BellBank bank;
+    bank.prepare (kRate);
+    const auto& layout = ff::BandLayout::get();
+
+    ff::BandArray cut {};
+    for (int b = 0; b < ff::kNumBands; ++b)
+    {
+        const float hz = layout.centreHz[(size_t) b];
+        cut[(size_t) b] = (hz >= 140.0f && hz <= 600.0f) ? 4.0f : 0.0f;
+    }
+
+    const auto weights = ff::BellBank::rangeWeights (140.0f, 14000.0f);
+    const auto allowed = bank.bellsWithin (140.0f * 1.1f, 14000.0f);
+    ff::BellArray gains {};
+    for (int frame = 0; frame < 20; ++frame)   // about 0.2 s of analysis frames
+        bank.fit (cut, weights, allowed, 6.0f, gains);
+
+    for (float hz : { 30.0f, 50.0f, 70.0f, 90.0f, 112.0f })
+    {
+        const float leak = bank.cutAt (hz, gains);
+        std::printf ("  info: Range from 140 Hz, cut at %3.0f Hz = %.2f dB\n", hz, leak);
+        CHECK (leak < (hz <= 100.0f ? 0.5f : 1.0f));
+    }
+    CHECK (bank.cutAt (250.0f, gains) > 3.0f);   // the conflict itself is still released
+    CHECK (bank.cutAt (400.0f, gains) > 3.0f);
+
+    // Engine level: Space never works below Bass Mono, EQ never below Range.
+    ff::TrackEngine engine;
+    engine.prepare (kRate, 512);
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    for (int b = 0; b < ff::kNumBands; ++b)
+        ref.midDb[(size_t) b] = -40.0f;   // a broadband reference: every band asks for room
+    ff::TrackParams p;
+    p.amount = 1.0f;
+    p.speed = 1.0f;
+    p.rangeLowHz = 140.0f;
+    p.bassMonoHz = 200.0f;
+    for (int i = 0; i < 300; ++i)
+    {
+        auto l = noise (512, 400 + (unsigned) i, 0.3f), r = l;
+        engine.process (l.data(), r.data(), 512, p, ref);
+    }
+    const auto& sb = engine.processor().bank();
+    float eqBelow = 0.0f, spaceBelow = 0.0f;
+    for (float hz : { 40.0f, 60.0f, 80.0f, 98.0f })   // up to 0.7 x Range low
+        eqBelow = std::max (eqBelow, sb.cutAt (hz, engine.eqBells()));
+    for (float hz : { 40.0f, 80.0f, 120.0f, 140.0f })   // up to 0.7 x Bass Mono
+        spaceBelow = std::max (spaceBelow, sb.cutAt (hz, engine.spaceBells()));
+    std::printf ("  info: engine, worst EQ cut up to 98 Hz %.2f dB, worst Space up to 140 Hz %.2f dB\n", eqBelow, spaceBelow);
+    CHECK (eqBelow < 0.5f);
+    CHECK (spaceBelow < 0.5f);
+    CHECK (sb.cutAt (1000.0f, engine.eqBells()) + sb.cutAt (1000.0f, engine.spaceBells()) > 3.0f);
 }
 
 void runProcessor (ff::StereoProcessor& p, std::vector<float>& l, std::vector<float>& r)
@@ -490,6 +554,7 @@ int main()
         { "release budget", testBudget },
         { "smoother", testSmoother },
         { "bell fit", testBellFit },
+        { "range limits", testRangeLimits },
         { "stereo processor", testStereoProcessor },
         { "track engine", testTrackEngine },
         { "shared bus", testSharedBus },

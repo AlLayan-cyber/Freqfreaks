@@ -10,16 +10,21 @@
 namespace ff
 {
 
-constexpr int kNumBells = 12;
+constexpr int kNumBells = 16;
 using BellArray = std::array<float, kNumBells>;
 
-/** A fixed bank of broad, overlapping bell filters, and a fitter that turns a
+/** A fixed bank of smooth, overlapping bell filters, and a fitter that turns a
     per-band cut curve into bell gains.
 
     This is the "parametric approximation" from the spec: the analysis works on
-    32 bands, but audio is shaped by a few smooth bells. Bells stay at fixed
-    frequencies, so nothing jumps around; only their gains move, and the fit is
-    warm-started from the previous frame, which keeps it stable in time. */
+    32 bands, but audio is shaped by smooth bells. Bells sit at fixed, evenly
+    log-spaced frequencies (about 1.8 per octave, so the bass is resolved as well
+    as the highs); only their gains move, and the fit is warm-started from the
+    previous frame, which keeps it stable in time.
+
+    The fit is weighted: bands outside the allowed range (Range, Bass Mono) carry
+    a large weight with a target of 0 dB, so a bell near a limit cuts less rather
+    than leaking its skirt across it. */
 class BellBank
 {
 public:
@@ -29,20 +34,30 @@ public:
     float centreHz (int bell) const noexcept         { return fc[(size_t) bell]; }
     float q (int bell) const noexcept                { return qs[(size_t) bell]; }
 
-    /** Fits non-negative cuts (dB) so the bank's response approximates cutDb.
-        Bells with allowed[k] == false stay at 0. gains is used as warm start and
-        receives the result. */
-    void fit (const BandArray& cutDb, const std::array<bool, kNumBells>& allowed,
+    /** Fits non-negative cuts (dB) so the bank's response approximates cutDb,
+        minimising sum of weight[b] * error[b]^2. Bells with allowed[k] == false
+        stay at 0. gains is used as warm start and receives the result. */
+    void fit (const BandArray& cutDb, const BandArray& weight, const std::array<bool, kNumBells>& allowed,
               float maxCutDb, BellArray& gains) const noexcept;
+
+    /** Weights for fit(): 1 inside [lowHz, highHz], outsideWeight elsewhere. */
+    static BandArray rangeWeights (float lowHz, float highHz, float outsideWeight = 40.0f) noexcept;
+
+    /** Bells whose centre lies inside [lowHz, highHz]; the rest would mostly cut outside. */
+    std::array<bool, kNumBells> bellsWithin (float lowHz, float highHz) const noexcept;
+
+    /** Exact cut (positive dB) of the whole bank at any frequency, for drawing. */
+    float cutAt (float hz, const BellArray& gains) const noexcept;
 
     /** Predicted cut (positive dB) in each analysis band for the given bell cuts. */
     BandArray response (const BellArray& gains) const noexcept;
 
 private:
+    float largestEigen (const BandArray& weight) const noexcept;
+
     double rate = 48000.0;
     BellArray fc {}, qs {};
     std::array<std::array<float, kNumBells>, kNumBands> shape {};   // cut in band b per dB of bell k
-    float stepSize = 0.1f;
 };
 
 } // namespace ff

@@ -61,16 +61,17 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
     bs.bassMonoHz = p.bassMonoHz;
     currentBudget = splitBudget (smoothed, bs);
 
+    // Range and Bass Mono are hard limits: bells outside are off, and the fit is weighted so
+    // that a bell near a limit cuts less instead of leaking its skirt across it.
     const auto& bank = stereo.bank();
-    std::array<bool, kNumBells> eqAllowed {}, spaceAllowed {};
-    for (int k = 0; k < kNumBells; ++k)
-    {
-        eqAllowed[(size_t) k] = true;
-        spaceAllowed[(size_t) k] = bank.centreHz (k) >= p.bassMonoHz;
-    }
+    const float spaceLowHz = std::max (p.bassMonoHz, p.rangeLowHz);
+    const auto eqWeights = BellBank::rangeWeights (p.rangeLowHz, p.rangeHighHz);
+    const auto spaceWeights = BellBank::rangeWeights (spaceLowHz, p.rangeHighHz);
+    const auto eqAllowed = bank.bellsWithin (p.rangeLowHz * 1.1f, p.rangeHighHz / 1.1f);
+    const auto spaceAllowed = bank.bellsWithin (spaceLowHz * 1.25f, p.rangeHighHz / 1.1f);
 
-    bank.fit (currentBudget.eq, eqAllowed, p.eqDepthDb, eqGains);
-    bank.fit (currentBudget.space, spaceAllowed, p.monoSafetyDb, spaceGains);
+    bank.fit (currentBudget.eq, eqWeights, eqAllowed, p.eqDepthDb, eqGains);
+    bank.fit (currentBudget.space, spaceWeights, spaceAllowed, p.monoSafetyDb, spaceGains);
 
     if (p.bypass)
     {
