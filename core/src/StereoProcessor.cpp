@@ -68,6 +68,8 @@ void StereoProcessor::reset() noexcept
             s.reset();
     shortDecorrelator.reset();
     longDecorrelator.reset();
+    eqActive.fill (false);
+    spaceActive.fill (false);
     updateCoefficients();
 }
 
@@ -82,9 +84,29 @@ void StereoProcessor::setTargets (const BellArray& eqCutDb, const BellArray& spa
 
 void StereoProcessor::updateCoefficients() noexcept
 {
+    constexpr float activeDb = 1.0e-3f;
+
     for (int k = 0; k < kNumBells; ++k)
     {
         const auto i = (size_t) k;
+
+        // Switching a bell in starts from clean state; its gain is ~0 dB then, so there is no click.
+        const bool eqOn = eqNow[i] > activeDb;
+        if (eqOn && ! eqActive[i])
+        {
+            eqLeft[i].reset();
+            eqRight[i].reset();
+        }
+        eqActive[i] = eqOn;
+
+        const bool spaceOn = spaceNow[i] > activeDb;
+        if (spaceOn && ! spaceActive[i])
+        {
+            spaceMid[i].reset();
+            transferBand[i].reset();
+        }
+        spaceActive[i] = spaceOn;
+
         eqCoeffs[i]    = BiquadCoeffs::peaking (rate, bells.centreHz (k), bells.q (k), -eqNow[i]);
         spaceCoeffs[i] = BiquadCoeffs::peaking (rate, bells.centreHz (k), bells.q (k), -spaceNow[i]);
 
@@ -121,7 +143,8 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
 
             float mid = m;
             for (int k = 0; k < kNumBells; ++k)
-                mid = spaceMid[(size_t) k].process (mid, spaceCoeffs[(size_t) k]);
+                if (spaceActive[(size_t) k])
+                    mid = spaceMid[(size_t) k].process (mid, spaceCoeffs[(size_t) k]);
 
             float source = m;
             if (mode == SpaceMode::spread)
@@ -131,7 +154,8 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
 
             float moved = 0.0f;
             for (int k = 0; k < kNumBells; ++k)
-                moved += transferGain[(size_t) k] * transferBand[(size_t) k].process (source, bandpassCoeffs[(size_t) k]);
+                if (spaceActive[(size_t) k])
+                    moved += transferGain[(size_t) k] * transferBand[(size_t) k].process (source, bandpassCoeffs[(size_t) k]);
 
             side += mode == SpaceMode::panAway ? panSign * moved : moved;
 
@@ -139,8 +163,11 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
             float r = mid - side;
             for (int k = 0; k < kNumBells; ++k)
             {
-                l = eqLeft[(size_t) k].process (l, eqCoeffs[(size_t) k]);
-                r = eqRight[(size_t) k].process (r, eqCoeffs[(size_t) k]);
+                if (eqActive[(size_t) k])
+                {
+                    l = eqLeft[(size_t) k].process (l, eqCoeffs[(size_t) k]);
+                    r = eqRight[(size_t) k].process (r, eqCoeffs[(size_t) k]);
+                }
             }
             left[j] = l;
             right[j] = r;

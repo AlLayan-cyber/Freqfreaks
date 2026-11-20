@@ -76,6 +76,8 @@ private:
 
     std::array<BiquadCoeffs, kNumBells> eqCoeffs {}, spaceCoeffs {}, bandpassCoeffs {};
     std::array<float, kNumBells> transferGain {};
+    // A bell at 0 dB is skipped entirely: bit-exact pass-through and less CPU.
+    std::array<bool, kNumBells> eqActive {}, spaceActive {};
     std::array<BiquadState, kNumBells> eqLeft {}, eqRight {}, spaceMid {}, transferBand {};
 };
 

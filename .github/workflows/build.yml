@@ -45,7 +45,7 @@ jobs:
 
       - name: Test
         working-directory: build
-        run: ctest -C Release --output-on-failure
+        run: ctest -C Release -V
 
       - name: Package
         shell: bash
@@ -58,6 +58,7 @@ jobs:
             done
             [ -d "$art/Standalone" ] && mkdir -p dist/Standalone && cp -R "$art/Standalone/." dist/Standalone/ || true
           done
+          rm -f dist/*.exp dist/*.lib   # MSVC import libraries, not needed by hosts
           ls -la dist
 
       - uses: actions/upload-artifact@v4

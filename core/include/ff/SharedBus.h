@@ -153,7 +153,7 @@ public:
 
 private:
     bus::Memory* mem = nullptr;
-    void* platformHandle = nullptr;
+    [[maybe_unused]] void* platformHandle = nullptr;   // Windows file-mapping handle
     std::size_t mappedSize = 0;
     bool shared = false;
     int mySlot = -1;
