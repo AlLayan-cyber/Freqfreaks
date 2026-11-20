@@ -50,6 +50,8 @@ namespace bus
         float amount = 0.0f;
         float spaceAmount = 0.0f;
         float compensationDb = 0.0f;                    // automatic output gain right now
+        std::uint32_t spaceMode = 0;                    // 0 Spread, 1 Pan Away, 2 Decorrelate
+        float hubTrim = 1.0f;                           // the Hub's trim this track is applying
         std::uint32_t flags = 0;                        // see TrackFlags
     };
 
@@ -58,6 +60,21 @@ namespace bus
         flagBypassed      = 1u << 0,
         flagReferenceLost = 1u << 1,
         flagLinkOff       = 1u << 2,
+        flagHubBypassed   = 1u << 3,   // bypassed by the Hub (all or this track)
+    };
+
+    /** The Hub's setting for one track, found by the track's instance id. */
+    struct HubTrim
+    {
+        std::uint64_t id = 0;
+        float trim = 1.0f;            // multiplies that track's Amount (0..1.5)
+        std::uint32_t flags = 0;      // bit 0: bypass this track
+    };
+
+    enum HubFlags : std::uint32_t
+    {
+        hubCompareA = 1u << 0,        // compare A: all processing off (listening)
+        hubBypassAll = 1u << 1,       // global bypass
     };
 
     /** What the Hub publishes. */
@@ -65,7 +82,38 @@ namespace bus
     {
         float totalAmount = 1.0f;     // multiplies every track's Amount
         float spaceAmount = 1.0f;     // multiplies every track's Space Amount
-        std::uint32_t flags = 0;      // bit 0: compare A (all FreqFreaks processing bypassed)
+        std::uint32_t flags = 0;      // see HubFlags
+        HubTrim trims[kMaxSlots] {};
+
+        /** This track's trim, or a neutral one. */
+        HubTrim trimFor (std::uint64_t trackId) const noexcept
+        {
+            for (const auto& t : trims)
+                if (t.id == trackId && trackId != 0)
+                    return t;
+            return {};
+        }
+    };
+
+    /** A request from the Hub to change a track's own parameters (the remote panel). */
+    struct RemoteCommand
+    {
+        std::uint32_t serial = 0;     // changes with every new command
+        std::uint32_t mask = 0;       // see RemoteFields
+        float amount = 0.0f;          // 0..1
+        float spaceAmount = 0.0f;     // 0..2
+        std::uint32_t link = 1;
+        std::uint32_t spaceMode = 0;
+        std::uint64_t referenceId = 0;
+    };
+
+    enum RemoteFields : std::uint32_t
+    {
+        remoteAmount = 1u << 0,
+        remoteSpace = 1u << 1,
+        remoteLink = 1u << 2,
+        remoteSpaceMode = 1u << 3,
+        remoteReference = 1u << 4,
     };
 
     struct alignas (64) Slot
@@ -74,6 +122,8 @@ namespace bus
         std::atomic<std::uint64_t> heartbeatMs;
         std::atomic<std::uint32_t> sequence;
         TrackData data;
+        std::atomic<std::uint32_t> remoteSequence;   // written by the Hub, read by the track
+        RemoteCommand remote;
     };
 
     struct HubBlock
@@ -140,6 +190,12 @@ public:
 
     /** Real-time safe: latest data of the instance with the given id. */
     bool read (std::uint64_t id, bus::TrackData& out, bool* isStale = nullptr) const noexcept;
+
+    /** Hub side: asks the track with this id to change its own parameters. */
+    bool sendRemote (std::uint64_t trackId, const bus::RemoteCommand& command) noexcept;
+
+    /** Track side: the latest remote command for this instance, if its serial is newer than lastSerial. */
+    bool readRemote (bus::RemoteCommand& out, std::uint32_t lastSerial) const noexcept;
 
     /** Not real-time safe (allocates): every non-empty slot. */
     std::vector<BusEntry> list() const;

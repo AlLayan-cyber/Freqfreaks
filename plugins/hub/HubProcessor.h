@@ -7,6 +7,7 @@
 
 #include "ff/SharedBus.h"
 
+#include <array>
 #include <atomic>
 
 namespace ff
@@ -17,6 +18,7 @@ namespace hubParams
     inline constexpr const char* totalAmount = "totalAmount";
     inline constexpr const char* spaceAmount = "spaceAmount";
     inline constexpr const char* compareA    = "compareA";
+    inline constexpr const char* bypassAll   = "bypassAll";
 }
 
 /** FreqFreaks Hub: goes on the master. Passes audio through untouched, measures
@@ -58,6 +60,13 @@ public:
     /** True while another Hub in the project holds the bus. */
     bool isDuplicate() const noexcept                      { return duplicate.load(); }
 
+    // Per-track settings, keyed by the track's instance id (message thread).
+    float trimFor (std::uint64_t trackId) const;
+    bool isTrackBypassed (std::uint64_t trackId) const;
+    void setTrim (std::uint64_t trackId, float trim);
+    void setTrackBypassed (std::uint64_t trackId, bool bypassed);
+    void resetTrims();
+
     /** Mono fold-down power relative to the stereo power (Mid / (Mid + Side)), 0..1.
         1 = nothing lost in mono, 0.5 = 3 dB quieter. */
     float monoCompatibility() const noexcept               { return mono.load(); }
@@ -65,7 +74,8 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void timerCallback() override;
-    bus::HubData currentHubData() const noexcept;
+    bus::HubData& currentHubData() noexcept;
+    bus::HubTrim* findOrAddTrim (std::uint64_t trackId);
 
     juce::AudioProcessorValueTreeState parameters;
     SharedBus bus;
@@ -73,6 +83,12 @@ private:
     std::atomic<bool> duplicate { false };
     std::atomic<float> mono { 1.0f };
     float midPower = 0.0f, sidePower = 0.0f, meterCoeff = 0.9f;
+
+    mutable juce::SpinLock trimLock;
+    std::array<bus::HubTrim, bus::kMaxSlots> trims {};      // guarded by trimLock
+    std::array<bus::HubTrim, bus::kMaxSlots> audioTrims {}; // last copy the audio thread got
+    bus::HubData publishScratch;                            // audio thread
+    bus::HubData timerScratch;                              // message thread
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HubProcessor)
 };

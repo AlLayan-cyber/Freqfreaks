@@ -209,6 +209,12 @@ bool SharedBus::claim (std::uint64_t instanceId)
                 bus::TrackData empty;
                 empty.kind = bus::Kind::track;
                 seqWrite (s.sequence, s.data, empty);
+
+                // Drop any command left for a previous owner of this slot.
+                bus::RemoteCommand previous, cleared;
+                seqRead (s.remoteSequence, s.remote, previous);
+                cleared.serial = previous.serial;
+                seqWrite (s.remoteSequence, s.remote, cleared);
                 return true;
             }
         }
@@ -266,6 +272,33 @@ bool SharedBus::read (std::uint64_t id, bus::TrackData& out, bool* isStale) cons
         return out.kind == bus::Kind::track;
     }
     return false;
+}
+
+bool SharedBus::sendRemote (std::uint64_t trackId, const bus::RemoteCommand& command) noexcept
+{
+    if (trackId == 0)
+        return false;
+    for (int i = 0; i < bus::kMaxSlots; ++i)
+    {
+        auto& s = mem->slots[i];
+        if (s.owner.load (std::memory_order_acquire) != trackId)
+            continue;
+        bus::RemoteCommand next = command;
+        bus::RemoteCommand previous;
+        seqRead (s.remoteSequence, s.remote, previous);
+        next.serial = previous.serial + 1;
+        seqWrite (s.remoteSequence, s.remote, next);
+        return true;
+    }
+    return false;
+}
+
+bool SharedBus::readRemote (bus::RemoteCommand& out, std::uint32_t lastSerial) const noexcept
+{
+    if (mySlot < 0)
+        return false;
+    const auto& s = mem->slots[mySlot];
+    return seqRead (s.remoteSequence, s.remote, out) && out.serial != lastSerial && out.mask != 0;
 }
 
 std::vector<BusEntry> SharedBus::list() const

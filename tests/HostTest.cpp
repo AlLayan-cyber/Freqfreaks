@@ -310,7 +310,43 @@ int main (int argc, char** argv)
         compare->setValueNotifyingHost (0.0f);
     }
 
-    // 5. Reference in another process (DAWs that sandbox plug-ins).
+    // 5. Hub Bypass All switches every track off.
+    if (auto* bypassAll = findParam (*hub, "Bypass All"))
+    {
+        bypassAll->setValueNotifyingHost (1.0f);
+        Measure m;
+        run (4.0, *guitar, vocal.get(), hub.get(), guitarSrc, &vocalSrc, m, 3.0);
+        check (std::abs (m.drop2k()) < 0.5, "Hub Bypass All switches tracks off (" + juce::String (m.drop2k(), 2) + " dB)");
+        bypassAll->setValueNotifyingHost (0.0f);
+    }
+    else
+    {
+        check (false, "Hub exposes Bypass All");
+    }
+
+    // 6. The Hub's remote panel moves the track's own Amount knob.
+    {
+        ff::SharedBus remoteBus;
+        const auto gid = (std::uint64_t) stateOf (*guitar).getProperty ("instanceId").toString().getHexValue64();
+        ff::bus::RemoteCommand cmd;
+        cmd.mask = ff::bus::remoteAmount;
+        cmd.amount = 0.0f;
+        check (remoteBus.sendRemote (gid, cmd), "Hub can address the track");
+
+        Measure m;
+        run (4.0, *guitar, vocal.get(), hub.get(), guitarSrc, &vocalSrc, m, 3.0);   // timers run inside
+        auto* amount = findParam (*guitar, "Amount");
+        const float amountNow = amount != nullptr ? amount->getValue() : -1.0f;
+        check (amountNow < 0.01f && std::abs (m.drop2k()) < 0.5,
+               "remote panel sets the track's Amount (knob " + juce::String (amountNow * 100.0f, 1) + " %, 2 kHz "
+               + juce::String (m.drop2k(), 2) + " dB)");
+
+        cmd.amount = 0.7f;
+        remoteBus.sendRemote (gid, cmd);
+        run (1.0, *guitar, vocal.get(), hub.get(), guitarSrc, &vocalSrc, m, 10.0);
+    }
+
+    // 7. Reference in another process (DAWs that sandbox plug-ins).
     vocal.reset();
     {
         juce::ChildProcess child;

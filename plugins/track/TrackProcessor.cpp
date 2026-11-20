@@ -167,15 +167,20 @@ void TrackProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
     auto params = readParams();
 
-    bus::HubData hub;
+    bus::HubData& hub = hubScratch;
+    float trim = 1.0f;
+    bool hubOff = false;
     if (bus.readHub (hub))
     {
-        params.hubAmount = hub.totalAmount;
+        const auto mine = hub.trimFor (instanceId());
+        trim = juce::jlimit (0.0f, 1.5f, mine.trim);
+        params.hubAmount = hub.totalAmount * trim;
         params.hubSpace = hub.spaceAmount;
+        hubOff = (hub.flags & (bus::hubCompareA | bus::hubBypassAll)) != 0 || (mine.flags & 1u) != 0;
     }
-    const bool compareA = (hub.flags & 1u) != 0;
-    hubBypass = compareA;
-    params.bypass = params.bypass || compareA;
+    hubBypass = hubOff;
+    hubTrim = trim;
+    params.bypass = params.bypass || hubOff;
 
     ReferenceSnapshot ref;
     const auto refId = reference.load();
@@ -261,8 +266,10 @@ void TrackProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     d.amount = params.amount;
     d.spaceAmount = params.spaceAmount;
     d.compensationDb = engine.compensationDb();
+    d.spaceMode = (std::uint32_t) params.spaceMode;
+    d.hubTrim = trim;
     d.flags = (params.bypass ? bus::flagBypassed : 0u) | (referenceLost ? bus::flagReferenceLost : 0u)
-            | (params.link ? 0u : bus::flagLinkOff);
+            | (params.link ? 0u : bus::flagLinkOff) | (hubOff ? bus::flagHubBypassed : 0u);
     bus.publish (d);
 }
 
@@ -270,6 +277,39 @@ void TrackProcessor::timerCallback()
 {
     // Keeps us visible while the host is not running the audio callback.
     bus.heartbeat();
+    applyRemoteCommand();
+}
+
+void TrackProcessor::applyRemoteCommand()
+{
+    // The Hub's panel changes this track's own parameters, so the knobs move and the DAW
+    // can record them. Runs on the message thread.
+    bus::RemoteCommand cmd;
+    if (! bus.readRemote (cmd, lastRemoteSerial))
+        return;
+    lastRemoteSerial = cmd.serial;
+
+    auto set = [this] (const char* id, float plainValue) {
+        if (auto* prm = parameters.getParameter (id))
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost (prm->convertTo0to1 (plainValue));
+            prm->endChangeGesture();
+        }
+    };
+
+    if (cmd.mask & bus::remoteAmount)     set (trackParams::amount, juce::jlimit (0.0f, 100.0f, cmd.amount * 100.0f));
+    if (cmd.mask & bus::remoteSpace)      set (trackParams::space, juce::jlimit (0.0f, 200.0f, cmd.spaceAmount * 100.0f));
+    if (cmd.mask & bus::remoteLink)       set (trackParams::link, cmd.link != 0 ? 1.0f : 0.0f);
+    if (cmd.mask & bus::remoteSpaceMode)  set (trackParams::spaceMode, (float) juce::jlimit (0u, 2u, cmd.spaceMode));
+    if (cmd.mask & bus::remoteReference)
+    {
+        juce::String newRefName;
+        bus::TrackData refData;
+        if (cmd.referenceId != 0 && bus.read (cmd.referenceId, refData))
+            newRefName = juce::String::fromUTF8 (refData.name);
+        setReference (cmd.referenceId, newRefName);
+    }
 }
 
 //==============================================================================

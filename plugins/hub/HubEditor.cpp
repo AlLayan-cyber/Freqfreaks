@@ -386,8 +386,233 @@ void IssuePanel::mouseDown (const juce::MouseEvent& e)
 }
 
 //==============================================================================
+TrackRow::TrackRow (HubProcessor& p, std::uint64_t id) : processor (p), trackId (id)
+{
+    addAndMakeVisible (trim);   // first, so the text box gets our look
+    trim.setSliderStyle (juce::Slider::LinearHorizontal);
+    trim.setTextBoxStyle (juce::Slider::TextBoxRight, false, 46, 18);
+    trim.setRange (0.0, 150.0, 1.0);
+    trim.setTextValueSuffix ("%");
+    trim.setDoubleClickReturnValue (true, 100.0);
+    trim.setColour (juce::Slider::trackColourId, theme::text);
+    trim.setValue (processor.trimFor (trackId) * 100.0f, juce::dontSendNotification);
+    trim.setTooltip (u8 ("Больше / меньше подавления на этой дорожке (умножает её Amount). Двойной клик — 100%"));
+    trim.onValueChange = [this] { processor.setTrim (trackId, (float) trim.getValue() / 100.0f); };
+
+    bypass.setClickingTogglesState (true);
+    bypass.setColour (juce::TextButton::buttonOnColourId, theme::conflict.withAlpha (0.18f));
+    bypass.setColour (juce::TextButton::textColourOnId, theme::conflict);
+    bypass.setColour (juce::ComboBox::outlineColourId, theme::borderLight);
+    bypass.setToggleState (processor.isTrackBypassed (trackId), juce::dontSendNotification);
+    bypass.setTooltip (u8 ("Выключить FreqFreaks на этой дорожке"));
+    bypass.onClick = [this] { processor.setTrackBypassed (trackId, bypass.getToggleState()); };
+    addAndMakeVisible (bypass);
+}
+
+void TrackRow::update (const HubTrack& t)
+{
+    track = t;
+    if (! trim.isMouseButtonDown())
+        trim.setValue (processor.trimFor (trackId) * 100.0f, juce::dontSendNotification);
+    bypass.setToggleState (processor.isTrackBypassed (trackId), juce::dontSendNotification);
+    repaint();
+}
+
+void TrackRow::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (theme::panel);
+    g.fillRoundedRectangle (r, 9.0f);
+    g.setColour (theme::border);
+    g.drawRoundedRectangle (r.reduced (0.5f), 9.0f, 1.0f);
+
+    auto top = getLocalBounds().reduced (10, 6).removeFromTop (34);
+    g.setColour (track.colour);
+    g.fillEllipse ((float) top.getX(), (float) top.getY() + 5.0f, 10.0f, 10.0f);
+    top.removeFromLeft (18);
+    g.setColour (theme::text);
+    g.setFont (theme::font (13.0f, true));
+    g.drawText (track.name, top.removeFromTop (18), juce::Justification::centredLeft, true);
+
+    juce::String sub;
+    if ((track.data.flags & bus::flagHubBypassed) != 0)
+        sub = u8 ("обход");
+    else if (track.data.references[0] == 0)
+        sub = u8 ("референс");
+    else
+        sub = u8 ("→ ") + track.referenceName + u8 (" · ") + juce::String (juce::roundToInt (track.data.amount * 100.0f)) + "%";
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (11.0f));
+    g.drawText (sub, top, juce::Justification::centredLeft, true);
+}
+
+void TrackRow::resized()
+{
+    auto r = getLocalBounds().reduced (10, 6);
+    r.removeFromTop (36);
+    bypass.setBounds (r.removeFromRight (58).withHeight (22));
+    r.removeFromRight (6);
+    trim.setBounds (r.withHeight (22));
+}
+
+void TrackRow::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (onOpen)
+        onOpen (trackId);
+}
+
+//==============================================================================
+RemotePanel::RemotePanel (HubProcessor& p) : processor (p)
+{
+    for (auto* s : { &amount, &space })
+    {
+        addAndMakeVisible (*s);   // first, so the text box gets our look
+        s->setSliderStyle (juce::Slider::LinearHorizontal);
+        s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 60, 22);
+        s->setTextValueSuffix ("%");
+    }
+    amount.setRange (0.0, 100.0, 1.0);
+    space.setRange (0.0, 200.0, 1.0);
+    amount.setColour (juce::Slider::trackColourId, theme::text);
+    space.setColour (juce::Slider::trackColourId, theme::space);
+    amount.onDragEnd = [this] { send (bus::remoteAmount); };
+    space.onDragEnd = [this] { send (bus::remoteSpace); };
+    amount.onValueChange = [this] { if (! amount.isMouseButtonDown()) send (bus::remoteAmount); };
+    space.onValueChange = [this] { if (! space.isMouseButtonDown()) send (bus::remoteSpace); };
+
+    link.setClickingTogglesState (true);
+    link.setColour (juce::TextButton::buttonOnColourId, theme::space.withAlpha (0.14f));
+    link.setColour (juce::TextButton::textColourOnId, theme::space);
+    link.setColour (juce::ComboBox::outlineColourId, theme::borderLight);
+    link.onClick = [this] { send (bus::remoteLink); };
+    addAndMakeVisible (link);
+
+    styleChip (modeSpread, theme::space, 3001);
+    styleChip (modePan, theme::space, 3001);
+    styleChip (modeDecor, theme::space, 3001);
+    modeSpread.onClick = [this] { setMode (0); };
+    modePan.onClick = [this] { setMode (1); };
+    modeDecor.onClick = [this] { setMode (2); };
+    for (auto* b : { &modeSpread, &modePan, &modeDecor })
+        addAndMakeVisible (*b);
+
+    reference.onChange = [this] { send (bus::remoteReference); };
+    addAndMakeVisible (reference);
+
+    close.setTooltip (u8 ("Закрыть"));
+    close.onClick = [this] { if (onClose) onClose(); };
+    addAndMakeVisible (close);
+}
+
+void RemotePanel::open (const HubTrack& t, const std::vector<HubTrack>& all)
+{
+    target = t;
+    referenceIds.clear();
+    reference.clear (juce::dontSendNotification);
+    referenceIds.push_back (0);
+    reference.addItem (u8 ("— нет —"), 1);
+    for (const auto& other : all)
+    {
+        if (other.id == t.id)
+            continue;
+        referenceIds.push_back (other.id);
+        reference.addItem (other.name, (int) referenceIds.size());
+    }
+    update (all);
+    setVisible (true);
+    toFront (false);
+}
+
+void RemotePanel::update (const std::vector<HubTrack>& all)
+{
+    for (const auto& t : all)
+        if (t.id == target.id)
+            target = t;
+
+    const auto& d = target.data;
+    if (! amount.isMouseButtonDown())
+        amount.setValue (d.amount * 100.0f, juce::dontSendNotification);
+    if (! space.isMouseButtonDown())
+        space.setValue (d.spaceAmount * 100.0f, juce::dontSendNotification);
+    link.setToggleState ((d.flags & bus::flagLinkOff) == 0, juce::dontSendNotification);
+    mode = (int) d.spaceMode;
+    modeSpread.setToggleState (mode == 0, juce::dontSendNotification);
+    modePan.setToggleState (mode == 1, juce::dontSendNotification);
+    modeDecor.setToggleState (mode == 2, juce::dontSendNotification);
+    if (! reference.isPopupActive())
+        for (size_t i = 0; i < referenceIds.size(); ++i)
+            if (referenceIds[i] == d.references[0])
+                reference.setSelectedItemIndex ((int) i, juce::dontSendNotification);
+    repaint();
+}
+
+void RemotePanel::setMode (int newMode)
+{
+    mode = newMode;
+    send (bus::remoteSpaceMode);
+}
+
+void RemotePanel::send (std::uint32_t mask)
+{
+    bus::RemoteCommand cmd;
+    cmd.mask = mask;
+    cmd.amount = (float) amount.getValue() / 100.0f;
+    cmd.spaceAmount = (float) space.getValue() / 100.0f;
+    cmd.link = link.getToggleState() ? 1u : 0u;
+    cmd.spaceMode = (std::uint32_t) mode;
+    const int idx = reference.getSelectedItemIndex();
+    cmd.referenceId = idx >= 0 && idx < (int) referenceIds.size() ? referenceIds[(size_t) idx] : target.data.references[0];
+    processor.sharedBus().sendRemote (target.id, cmd);
+}
+
+void RemotePanel::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (theme::raised);
+    g.fillRoundedRectangle (r, 12.0f);
+    g.setColour (theme::borderLight);
+    g.drawRoundedRectangle (r.reduced (0.5f), 12.0f, 1.0f);
+
+    auto a = getLocalBounds().reduced (18, 14);
+    auto head = a.removeFromTop (26);
+    g.setColour (target.colour);
+    g.fillEllipse ((float) head.getX(), (float) head.getCentreY() - 5.0f, 10.0f, 10.0f);
+    g.setColour (theme::text);
+    g.setFont (theme::font (15.0f, true));
+    g.drawText (u8 ("Дорожка: ") + target.name, head.withTrimmedLeft (18), juce::Justification::centredLeft);
+
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (11.5f));
+    g.drawText (u8 ("Изменения уходят прямо в плагин дорожки: её ручки двигаются, DAW может записать автоматизацию."),
+                a.removeFromTop (18), juce::Justification::centredLeft);
+
+    g.setColour (theme::text);
+    g.setFont (theme::font (12.0f, true));
+    const int x = a.getX();
+    g.drawText ("Amount", x, 78, 120, 20, juce::Justification::centredLeft);
+    g.drawText ("Space Amount", x, 114, 120, 20, juce::Justification::centredLeft);
+    g.drawText (u8 ("Режим Space"), x, 150, 120, 20, juce::Justification::centredLeft);
+    g.drawText (u8 ("Уступает"), x, 190, 120, 20, juce::Justification::centredLeft);
+}
+
+void RemotePanel::resized()
+{
+    auto a = getLocalBounds().reduced (18, 14);
+    close.setBounds (getWidth() - 46, 12, 30, 26);
+    const int x = a.getX() + 120, w = a.getWidth() - 120;
+    amount.setBounds (x, 76, w - 80, 24);
+    link.setBounds (x + w - 70, 76, 70, 24);
+    space.setBounds (x, 112, w - 80, 24);
+    const int third = (w - 12) / 3;
+    modeSpread.setBounds (x, 148, third, 26);
+    modePan.setBounds (x + third + 6, 148, third, 26);
+    modeDecor.setBounds (x + 2 * (third + 6), 148, third, 26);
+    reference.setBounds (x, 188, juce::jmin (260, w), 26);
+}
+
+//==============================================================================
 HubEditor::HubEditor (HubProcessor& p)
-    : AudioProcessorEditor (p), processor (p)
+    : AudioProcessorEditor (p), processor (p), remote (p)
 {
     setLookAndFeel (&lnf);
 
@@ -414,6 +639,24 @@ HubEditor::HubEditor (HubProcessor& p)
     }
     compareA.setTooltip (u8 ("A: вся обработка FreqFreaks выключена"));
     compareB.setTooltip (u8 ("B: обработка включена"));
+    bypassAll.setClickingTogglesState (true);
+    bypassAll.setColour (juce::TextButton::buttonOnColourId, theme::conflict.withAlpha (0.18f));
+    bypassAll.setColour (juce::TextButton::textColourOnId, theme::conflict);
+    bypassAll.setColour (juce::ComboBox::outlineColourId, theme::borderLight);
+    bypassAll.setTooltip (u8 ("Выключить FreqFreaks на всех дорожках"));
+    bypassAllAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.state(), hubParams::bypassAll, bypassAll);
+    addAndMakeVisible (bypassAll);
+
+    resetTrims.setButtonText (u8 ("Сбросить тримы"));
+    resetTrims.setColour (juce::ComboBox::outlineColourId, theme::borderLight);
+    resetTrims.setTooltip (u8 ("Вернуть всем дорожкам трим 100% и снять обход"));
+    resetTrims.onClick = [this] { processor.resetTrims(); timerCallback(); };
+    addAndMakeVisible (resetTrims);
+
+    addChildComponent (remote);
+    remote.sendLookAndFeelChange();
+    remote.onClose = [this] { remote.setVisible (false); };
+
     compareA.onClick = [this] { if (auto* prm = processor.state().getParameter (hubParams::compareA)) prm->setValueNotifyingHost (1.0f); };
     compareB.onClick = [this] { if (auto* prm = processor.state().getParameter (hubParams::compareA)) prm->setValueNotifyingHost (0.0f); };
 
@@ -545,6 +788,9 @@ void HubEditor::timerCallback()
     }
 
     tracks = list;
+    rebuildRows();
+    if (remote.isVisible())
+        remote.update (list);
     canvas.setData (list);
     issues.setIssues (diagnose (list));
 
@@ -556,6 +802,37 @@ void HubEditor::timerCallback()
     repaint (sidebar);
 }
 
+void HubEditor::openRemote (std::uint64_t trackId)
+{
+    for (const auto& tr : tracks)
+        if (tr.id == trackId)
+            remote.open (tr, tracks);
+}
+
+void HubEditor::rebuildRows()
+{
+    bool same = rows.size() == tracks.size();
+    for (size_t i = 0; same && i < rows.size(); ++i)
+        same = rows[i]->id() == tracks[i].id;
+
+    if (! same)
+    {
+        rows.clear();
+        for (const auto& t : tracks)
+        {
+            auto row = std::make_unique<TrackRow> (processor, t.id);
+            row->onOpen = [this] (std::uint64_t id) { openRemote (id); };
+            addAndMakeVisible (*row);
+            row->sendLookAndFeelChange();   // created before it had our look: rebuild its text boxes
+            rows.push_back (std::move (row));
+        }
+        resized();
+    }
+
+    for (size_t i = 0; i < rows.size(); ++i)
+        rows[i]->update (tracks[i]);
+}
+
 void HubEditor::resized()
 {
     auto r = getLocalBounds();
@@ -563,10 +840,24 @@ void HubEditor::resized()
 
     totalSlider.setBounds (370, 22, 220, 24);
     spaceSlider.setBounds (720, 22, 220, 24);
-    compareA.setBounds (980, 20, 34, 28);
-    compareB.setBounds (1014, 20, 34, 28);
+    bypassAll.setBounds (972, 20, 72, 28);
+    compareA.setBounds (1050, 20, 32, 28);
+    compareB.setBounds (1082, 20, 32, 28);
 
     sidebar = r.removeFromLeft (236);
+    {
+        auto s = sidebar.reduced (14, 16);
+        s.removeFromTop (30 + (processor.isDuplicate() ? 40 : 0));
+        resetTrims.setBounds (s.removeFromBottom (28));
+        s.removeFromBottom (30);
+        for (auto& row : rows)
+        {
+            auto rb = s.removeFromTop (70);
+            s.removeFromTop (6);
+            row->setVisible (rb.getBottom() <= s.getBottom() + 76);
+            row->setBounds (rb);
+        }
+    }
     rightPanel = r.removeFromRight (330);
     issues.setBounds (rightPanel);
 
@@ -579,6 +870,7 @@ void HubEditor::resized()
     tabStereo.setBounds (tabs.removeFromLeft (90));
     centre.removeFromTop (14);
     canvas.setBounds (centre);
+    remote.setBounds (centre.withHeight (262).reduced (10, 10).translated (0, 40));
 }
 
 void HubEditor::paint (juce::Graphics& g)
@@ -608,13 +900,13 @@ void HubEditor::paint (juce::Graphics& g)
 
     // Mono meter: how much quieter the mix gets when folded to mono.
     const float lossDb = 10.0f * std::log10 (juce::jmax (1.0e-4f, processor.monoCompatibility()));
-    const juce::Rectangle<float> meter (1090.0f, 38.0f, 160.0f, 6.0f);
+    const juce::Rectangle<float> meter (1128.0f, 38.0f, 132.0f, 6.0f);
     g.setColour (theme::textDim);
     g.setFont (theme::font (11.0f));
-    g.drawText (u8 ("Потеря в моно"), 1090, 18, 100, 16, juce::Justification::centredLeft);
+    g.drawText (u8 ("Потеря в моно"), 1128, 18, 90, 16, juce::Justification::centredLeft);
     g.setColour (theme::text);
     g.setFont (theme::mono (12.0f));
-    g.drawText (dbText (-lossDb), 1180, 18, 70, 16, juce::Justification::centredRight);
+    g.drawText (dbText (-lossDb), 1200, 18, 60, 16, juce::Justification::centredRight);
     g.setColour (theme::track);
     g.fillRoundedRectangle (meter, 3.0f);
     g.setColour (lossDb < -3.5f ? theme::eq : theme::space);
@@ -644,45 +936,13 @@ void HubEditor::paint (juce::Graphics& g)
 
     int unresolved = 0;
     for (const auto& t : tracks)
-    {
-        auto row = s.removeFromTop (48);
-        s.removeFromTop (6);
-        if (row.getBottom() > sidebar.getBottom() - 40)
-            break;
-
-        g.setColour (theme::panel);
-        g.fillRoundedRectangle (row.toFloat(), 9.0f);
-        g.setColour (theme::border);
-        g.drawRoundedRectangle (row.toFloat().reduced (0.5f), 9.0f, 1.0f);
-
-        auto inner = row.reduced (10, 6);
-        g.setColour (t.colour);
-        g.fillEllipse ((float) inner.getX(), (float) inner.getCentreY() - 5.0f, 10.0f, 10.0f);
-        inner.removeFromLeft (18);
-        g.setColour (theme::text);
-        g.setFont (theme::font (13.0f, true));
-        g.drawText (t.name, inner.removeFromTop (18), juce::Justification::centredLeft, true);
-
-        juce::String sub;
-        const bool bypassed = (t.data.flags & bus::flagBypassed) != 0;
-        if (bypassed)
-            sub = u8 ("обход");
-        else if (t.data.references[0] == 0)
-            sub = u8 ("референс · ") + juce::String (juce::roundToInt (t.data.amount * 100.0f)) + "%";
-        else
-            sub = u8 ("→ ") + t.referenceName + u8 (" · ") + juce::String (juce::roundToInt (t.data.amount * 100.0f)) + "%";
-        g.setColour (theme::textDim);
-        g.setFont (theme::font (11.0f));
-        g.drawText (sub, inner, juce::Justification::centredLeft, true);
-
         for (float v : t.data.restDb)
             if (v > 0.25f)
                 ++unresolved;
-    }
 
     g.setColour (theme::textDim);
     g.setFont (theme::font (12.0f));
-    auto footer = sidebar.reduced (14, 12).removeFromBottom (20);
+    auto footer = sidebar.reduced (14, 16).withTrimmedBottom (36).removeFromBottom (20);
     g.drawText (u8 ("Треков: ") + juce::String ((int) tracks.size()) + u8 (" · неразрешённых полос: ") + juce::String (unresolved),
                 footer, juce::Justification::centredLeft);
 }

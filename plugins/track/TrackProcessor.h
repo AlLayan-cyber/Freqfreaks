@@ -91,6 +91,7 @@ public:
     void setUiLevel (int l) noexcept                       { level = juce::jlimit (0, 2, l); }
 
     bool isHubBypassing() const noexcept                   { return hubBypass.load(); }
+    float hubTrimValue() const noexcept                    { return hubTrim.load(); }
 
     /** Exact cut curve of this track's filters, for the editor (message thread). */
     const BellBank& bellBank() const noexcept              { return displayBank; }
@@ -100,6 +101,7 @@ private:
     void timerCallback() override;
     void claimSlot (std::uint64_t preferredId);
     void refreshBusName();
+    void applyRemoteCommand();
     TrackParams readParams() const noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
@@ -110,6 +112,9 @@ private:
     std::atomic<std::uint64_t> reference { 0 };
     std::atomic<int> level { 1 };
     std::atomic<bool> hubBypass { false };
+    std::atomic<float> hubTrim { 1.0f };
+    std::uint32_t lastRemoteSerial = 0;   // message thread
+    bus::HubData hubScratch;              // audio thread (too big for the stack)
 
     // Name/colour come from the message thread; the audio thread copies them with a try-lock.
     mutable juce::SpinLock identityLock;

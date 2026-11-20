@@ -426,8 +426,14 @@ void TrackEditor::paint (juce::Graphics& g)
     g.setColour (hubOnline ? theme::space : theme::textDim);
     g.fillEllipse (690.0f, 28.0f, 8.0f, 8.0f);
     g.setColour (theme::textDim);
-    g.drawText (hubOnline ? u8 ("Hub · треков: ") + juce::String (trackCount) : u8 ("Hub не найден"),
-                704, 20, 128, 24, juce::Justification::centredLeft);
+    juce::String hubText = hubOnline ? u8 ("Hub · треков: ") + juce::String (trackCount) : u8 ("Hub не найден");
+    if (hubOnline && processor.isHubBypassing())
+        hubText = u8 ("Hub: обход");
+    else if (hubOnline && std::abs (processor.hubTrimValue() - 1.0f) > 0.005f)
+        hubText = u8 ("Hub: ×") + juce::String (processor.hubTrimValue(), 2);
+    g.setColour (hubOnline && (processor.isHubBypassing() || std::abs (processor.hubTrimValue() - 1.0f) > 0.005f)
+                     ? theme::eq : theme::textDim);
+    g.drawText (hubText, 704, 20, 128, 24, juce::Justification::centredLeft);
 
     // Spectrum card.
     if (! spectrumCard.isEmpty())
@@ -480,7 +486,7 @@ void TrackEditor::paint (juce::Graphics& g)
         juce::String status;
         juce::Colour statusColour = theme::space;
         if (processor.isHubBypassing())
-            status = u8 ("Hub: сравнение A — обработка выключена");
+            status = u8 ("Hub: обход — обработка выключена");
         else if (processor.referenceId() == 0)
             status = u8 ("Референс не выбран"), statusColour = theme::textDim;
         else if (referenceLost)

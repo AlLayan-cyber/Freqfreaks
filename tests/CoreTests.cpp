@@ -628,7 +628,35 @@ void testSharedBus()
         writer.join();
         CHECK (torn == 0);
 
+        // Hub trims are found by track id.
+        ff::bus::HubData withTrims;
+        withTrims.trims[3].id = idB;
+        withTrims.trims[3].trim = 0.5f;
+        withTrims.trims[3].flags = 1u;
+        CHECK_NEAR (withTrims.trimFor (idB).trim, 0.5, 1e-6);
+        CHECK (withTrims.trimFor (idB).flags == 1u);
+        CHECK_NEAR (withTrims.trimFor (idA).trim, 1.0, 1e-6);   // no entry -> neutral
+
+        // Remote commands: the Hub writes, the track reads each new one once.
+        ff::bus::RemoteCommand cmd;
+        cmd.mask = ff::bus::remoteAmount;
+        cmd.amount = 0.25f;
+        CHECK (hub.sendRemote (idB, cmd));
+        ff::bus::RemoteCommand got;
+        CHECK (b.readRemote (got, 0));
+        CHECK_NEAR (got.amount, 0.25, 1e-6);
+        CHECK (! b.readRemote (got, got.serial));               // already seen
+        CHECK (! hub.sendRemote (ff::SharedBus::makeInstanceId(), cmd));   // unknown track
+
+        // A new owner of a slot never sees the previous owner's command.
+        const int oldSlot = b.slotIndex();
         b.release();
+        ff::SharedBus fresh (region);
+        CHECK (fresh.claim (ff::SharedBus::makeInstanceId()));
+        if (fresh.slotIndex() == oldSlot)
+            CHECK (! fresh.readRemote (got, 0));
+        fresh.release();
+
         CHECK (hub.list().size() == 1);
     }
 

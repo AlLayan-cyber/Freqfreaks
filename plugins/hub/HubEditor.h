@@ -68,6 +68,58 @@ private:
     int selected = -1;
 };
 
+/** One track in the Hub's list: trim (0-150 %) and bypass for that track.
+    Double-click opens the remote panel. */
+class TrackRow : public juce::Component
+{
+public:
+    TrackRow (HubProcessor&, std::uint64_t trackId);
+
+    std::uint64_t id() const noexcept    { return trackId; }
+    void update (const HubTrack&);
+    std::function<void (std::uint64_t)> onOpen;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+private:
+    HubProcessor& processor;
+    std::uint64_t trackId;
+    HubTrack track;
+    juce::Slider trim;
+    juce::TextButton bypass { "Bypass" };
+};
+
+/** Remote panel: edits the chosen track's own parameters through the bus,
+    so the track's knobs move and the DAW can record them. */
+class RemotePanel : public juce::Component
+{
+public:
+    explicit RemotePanel (HubProcessor&);
+
+    void open (const HubTrack&, const std::vector<HubTrack>& all);
+    void update (const std::vector<HubTrack>& all);
+    std::uint64_t trackId() const noexcept   { return target.id; }
+    std::function<void()> onClose;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void send (std::uint32_t mask);
+    void setMode (int mode);
+
+    HubProcessor& processor;
+    HubTrack target;
+    std::vector<std::uint64_t> referenceIds;
+    juce::Slider amount, space;
+    juce::TextButton link { "Link" }, close { "X" };
+    juce::TextButton modeSpread { "Spread" }, modePan { "Pan Away" }, modeDecor { "Decorrelate" };
+    juce::ComboBox reference;
+    int mode = 0;
+};
+
 class HubEditor : public juce::AudioProcessorEditor,
                   private juce::Timer
 {
@@ -77,6 +129,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    /** Opens the remote panel for a track (as a double-click on its row does). */
+    void openRemote (std::uint64_t trackId);
 
 private:
     void timerCallback() override;
@@ -88,7 +143,11 @@ private:
 
     juce::Slider totalSlider, spaceSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> totalAttach, spaceAttach;
-    juce::TextButton compareA { "A" }, compareB { "B" };
+    juce::TextButton compareA { "A" }, compareB { "B" }, bypassAll { "Bypass" }, resetTrims;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAllAttach;
+    std::vector<std::unique_ptr<TrackRow>> rows;
+    RemotePanel remote;
+    void rebuildRows();
     juce::TextButton tabMap, tabMatrix, tabStereo;
 
     HubCanvas canvas;

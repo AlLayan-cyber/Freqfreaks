@@ -115,9 +115,25 @@ int main (int argc, char** argv)
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (guitarL.processor->createEditor());
         ok &= save (*editor, outDir.getChildFile ("track.png"));
     }
+    // Hub: guitar trimmed to 60 %, pad bypassed from the Hub.
+    hub.setTrim (guitarL.processor->instanceId(), 0.6f);
+    hub.setTrackBypassed (pad.processor->instanceId(), true);
+    for (int b = 0; b < (int) (1.0 * kRate / kBlock); ++b)
+    {
+        juce::AudioBuffer<float> mix (2, kBlock);
+        mix.clear();
+        for (auto* v : { &vocal, &guitarL, &pad, &bass, &kick })
+            v->process (mix);
+        hub.processBlock (mix, midi);
+    }
     {
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (hub.createEditor());
         ok &= save (*editor, outDir.getChildFile ("hub-map.png"));
+        if (auto* hubEditor = dynamic_cast<ff::HubEditor*> (editor.get()))
+        {
+            hubEditor->openRemote (guitarL.processor->instanceId());
+            ok &= save (*editor, outDir.getChildFile ("hub-panel.png"));
+        }
     }
     return ok ? 0 : 1;
 }
