@@ -53,6 +53,7 @@ namespace bus
     {
         flagBypassed      = 1u << 0,
         flagReferenceLost = 1u << 1,
+        flagLinkOff       = 1u << 2,
     };
 
     /** What the Hub publishes. */
