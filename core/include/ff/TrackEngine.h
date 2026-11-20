@@ -29,6 +29,10 @@ struct TrackParams
     float panSign       = 1.0f;     ///< Pan Away direction: +1 left, -1 right
     bool  bypass        = false;
 
+    float outputDb      = 0.0f;     ///< manual output trim, -12..+12 dB
+    bool  autoGain      = false;    ///< restore the loudness the release took away (up to +6 dB)
+    bool  spaceComp     = true;     ///< keep loudness constant while Space Amount changes
+
     float hubAmount     = 1.0f;     ///< multipliers sent by the Hub (1 = no change)
     float hubSpace      = 1.0f;
 };
@@ -66,16 +70,28 @@ public:
     const StereoProcessor& processor() const noexcept   { return stereo; }
     bool hasReference() const noexcept                  { return referenceActive; }
 
+    /** Automatic part of the output gain right now (Space compensation or Auto), dB. */
+    float compensationDb() const noexcept               { return compTargetDb; }
+
+    /** Perceived loudness change (dB) of the processed track against its input,
+        and against the same release with Space Amount at 0 %; exposed for tests. */
+    float loudnessChangeDb() const noexcept             { return lossVsInputDb; }
+    float spaceLoudnessDb() const noexcept              { return spaceVsAllEqDb; }
+
 private:
     void updateControl (const TrackParams& params, const ReferenceSnapshot& reference) noexcept;
+    void updateCompensation (const TrackParams& params) noexcept;
 
     double rate = 48000.0;
     Analyzer analyzer;
     BandSmoother smoother;
     StereoProcessor stereo;
     Budget currentBudget;
-    BellArray eqGains {}, spaceGains {};
+    BellArray eqGains {}, spaceGains {}, transferWeights {};
     bool referenceActive = false;
+
+    float compTargetDb = 0.0f, lossVsInputDb = 0.0f, spaceVsAllEqDb = 0.0f;
+    float outputGain = 1.0f, outputGainTarget = 1.0f, gainCoeff = 0.999f;
 
     int lookahead = 0, delayPos = 0;
     std::vector<float> delayLeft, delayRight;

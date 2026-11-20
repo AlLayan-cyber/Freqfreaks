@@ -63,6 +63,7 @@ void StereoProcessor::reset() noexcept
 {
     eqNow.fill (0.0f);
     spaceNow.fill (0.0f);
+    transferNow.fill (0.0f);
     for (auto* bank : { &eqLeft, &eqRight, &spaceMid, &transferBand })
         for (auto& s : *bank)
             s.reset();
@@ -70,14 +71,16 @@ void StereoProcessor::reset() noexcept
     longDecorrelator.reset();
     eqActive.fill (false);
     spaceActive.fill (false);
+    transferActive.fill (false);
     updateCoefficients();
 }
 
-void StereoProcessor::setTargets (const BellArray& eqCutDb, const BellArray& spaceCutDb,
+void StereoProcessor::setTargets (const BellArray& eqCutDb, const BellArray& spaceCutDb, const BellArray& transferWeights,
                                   SpaceMode newMode, float newPanSign) noexcept
 {
     eqTarget = eqCutDb;
     spaceTarget = spaceCutDb;
+    transferTarget = transferWeights;
     mode = newMode;
     panSign = newPanSign >= 0.0f ? 1.0f : -1.0f;
 }
@@ -101,18 +104,16 @@ void StereoProcessor::updateCoefficients() noexcept
 
         const bool spaceOn = spaceNow[i] > activeDb;
         if (spaceOn && ! spaceActive[i])
-        {
             spaceMid[i].reset();
-            transferBand[i].reset();
-        }
         spaceActive[i] = spaceOn;
+
+        const bool transferOn = transferNow[i] > 1.0e-4f;
+        if (transferOn && ! transferActive[i])
+            transferBand[i].reset();
+        transferActive[i] = transferOn;
 
         eqCoeffs[i]    = BiquadCoeffs::peaking (rate, bells.centreHz (k), bells.q (k), -eqNow[i]);
         spaceCoeffs[i] = BiquadCoeffs::peaking (rate, bells.centreHz (k), bells.q (k), -spaceNow[i]);
-
-        // Energy that leaves the Mid in this band re-enters as Side: |c|^2 + |t|^2 = 1.
-        const float c = dbToGain (-spaceNow[i]);
-        transferGain[i] = std::sqrt (std::max (0.0f, 1.0f - c * c));
     }
 }
 
@@ -128,9 +129,12 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
             const auto i = (size_t) k;
             const float e = eqTarget[i] + glideCoeff * (eqNow[i] - eqTarget[i]);
             const float s = spaceTarget[i] + glideCoeff * (spaceNow[i] - spaceTarget[i]);
-            changed = changed || std::abs (e - eqNow[i]) > 1.0e-4f || std::abs (s - spaceNow[i]) > 1.0e-4f;
+            const float t = transferTarget[i] + glideCoeff * (transferNow[i] - transferTarget[i]);
+            changed = changed || std::abs (e - eqNow[i]) > 1.0e-4f || std::abs (s - spaceNow[i]) > 1.0e-4f
+                      || std::abs (t - transferNow[i]) > 1.0e-5f;
             eqNow[i] = e;
             spaceNow[i] = s;
+            transferNow[i] = t;
         }
         if (changed)
             updateCoefficients();
@@ -154,8 +158,8 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
 
             float moved = 0.0f;
             for (int k = 0; k < kNumBells; ++k)
-                if (spaceActive[(size_t) k])
-                    moved += transferGain[(size_t) k] * transferBand[(size_t) k].process (source, bandpassCoeffs[(size_t) k]);
+                if (transferActive[(size_t) k])
+                    moved += transferNow[(size_t) k] * transferBand[(size_t) k].process (source, bandpassCoeffs[(size_t) k]);
 
             side += mode == SpaceMode::panAway ? panSign * moved : moved;
 

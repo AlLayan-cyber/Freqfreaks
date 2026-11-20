@@ -4,6 +4,7 @@
 #pragma once
 
 #include "ff/Bands.h"
+#include "ff/BellBank.h"
 
 #include <atomic>
 #include <cstdint>
@@ -22,7 +23,7 @@ namespace ff
 namespace bus
 {
     constexpr std::uint32_t kMagic   = 0x46524551;   // "FREQ"
-    constexpr std::uint32_t kVersion = 1;
+    constexpr std::uint32_t kVersion = 2;   // bump on any layout change
     constexpr int kMaxSlots = 64;
     constexpr int kNameLength = 48;
     constexpr int kMaxReferences = 4;
@@ -44,8 +45,11 @@ namespace bus
         float spaceDb[kNumBands] {};
         float eqDb[kNumBands] {};
         float restDb[kNumBands] {};
+        float eqBells[kNumBells] {};                    // exact filter state, for drawing the wave
+        float spaceBells[kNumBells] {};
         float amount = 0.0f;
         float spaceAmount = 0.0f;
+        float compensationDb = 0.0f;                    // automatic output gain right now
         std::uint32_t flags = 0;                        // see TrackFlags
     };
 

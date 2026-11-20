@@ -120,6 +120,28 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     for (auto* b : { &modeSpread, &modePan, &modeDecor, &sideAuto, &sideLeft, &sideRight })
         addAndMakeVisible (*b);
 
+    addAndMakeVisible (outputSlider);   // first, so the text box gets our look
+    outputSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    outputSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 20);
+    outputSlider.setColour (juce::Slider::trackColourId, theme::text);
+    outputSlider.setDoubleClickReturnValue (true, 0.0);
+    outputSlider.setTooltip (u8 ("Ручная поправка громкости на выходе"));
+    outputAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::output, outputSlider);
+
+    for (auto* b : { &autoGainButton, &spaceCompButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setColour (juce::TextButton::buttonOnColourId, theme::space.withAlpha (0.14f));
+        b->setColour (juce::TextButton::textColourOnId, theme::space);
+        b->setColour (juce::ComboBox::outlineColourId, theme::borderLight);
+        addAndMakeVisible (*b);
+    }
+    autoGainButton.setTooltip (u8 ("Вернуть громкость, которую трек потерял от освобождения (до +6 дБ). "
+                                   "Делает сравнение A/B честным, но немного уменьшает эффект."));
+    spaceCompButton.setTooltip (u8 ("Держать громкость постоянной, когда крутишь Space Amount"));
+    autoGainAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, trackParams::autoGain, autoGainButton);
+    spaceCompAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, trackParams::spaceComp, spaceCompButton);
+
     setupRow (eqDepth, trackParams::eqDepth, u8 ("Depth (макс.)"));
     setupRow (rangeLow, trackParams::rangeLow, u8 ("Range от"));
     setupRow (rangeHigh, trackParams::rangeHigh, u8 ("Range до"));
@@ -277,6 +299,7 @@ void TrackEditor::timerCallback()
                       haveRef ? theme::trackColour (ref.colourArgb, refId) : theme::reference,
                       haveRef ? juce::String::fromUTF8 (ref.name) : juce::String(), bassHz);
     budget.setData (own);
+    shownCompensationDb = own.compensationDb;
 
     trackLabel.setText (processor.trackName(), juce::dontSendNotification);
     syncChoiceButtons();
@@ -348,6 +371,11 @@ void TrackEditor::resized()
     sideAuto.setBounds (k.getX(), y + 20, third, 30);
     sideLeft.setBounds (k.getX() + third + 6, y + 20, third, 30);
     sideRight.setBounds (k.getX() + 2 * (third + 6), y + 20, third, 30);
+    y += 64;
+    outputSlider.setBounds (k.getX(), y + 20, k.getWidth(), 22);
+    const int half = (k.getWidth() - 6) / 2;
+    autoGainButton.setBounds (k.getX(), y + 48, half, 28);
+    spaceCompButton.setBounds (k.getX() + half + 6, y + 48, half, 28);
 
     // Expert drawer: three cards.
     if (! drawer.isEmpty())
@@ -522,6 +550,20 @@ void TrackEditor::paint (juce::Graphics& g)
         g.drawText (u8 ("Режим Space"), k.getX(), y, 200, 16, juce::Justification::centredLeft);
         y += 64;
         g.drawText (u8 ("Сторона для Pan Away"), k.getX(), y, 200, 16, juce::Justification::centredLeft);
+
+        y += 64;
+        g.setColour (theme::text);
+        g.drawText ("Output", k.getX(), y, 100, 16, juce::Justification::centredLeft);
+        const auto& apvts2 = processor.state();
+        const bool autoOn = apvts2.getRawParameterValue (trackParams::autoGain)->load() > 0.5f;
+        const bool compOn = apvts2.getRawParameterValue (trackParams::spaceComp)->load() > 0.5f;
+        juce::String compText;
+        if (autoOn || compOn)
+            compText = (autoOn ? "Auto " : u8 ("компенсация ")) + (shownCompensationDb > 0.05f ? "+" : "")
+                       + juce::String (shownCompensationDb, 1) + " dB";
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (11.5f));
+        g.drawText (compText, k.getRight() - 170, y, 170, 16, juce::Justification::centredRight);
     }
 
     // Expert drawer.

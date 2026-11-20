@@ -29,6 +29,9 @@ namespace trackParams
     inline constexpr const char* spaceMode   = "spaceMode";
     inline constexpr const char* panSide     = "panSide";
     inline constexpr const char* bypass      = "bypass";
+    inline constexpr const char* output      = "output";
+    inline constexpr const char* autoGain    = "autoGain";
+    inline constexpr const char* spaceComp   = "spaceComp";
 }
 
 /** FreqFreaks Track: sits on each track, yields room to its reference track.
@@ -89,6 +92,9 @@ public:
 
     bool isHubBypassing() const noexcept                   { return hubBypass.load(); }
 
+    /** Exact cut curve of this track's filters, for the editor (message thread). */
+    const BellBank& bellBank() const noexcept              { return displayBank; }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void timerCallback() override;
@@ -99,6 +105,7 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     SharedBus bus;
     TrackEngine engine;
+    BellBank displayBank;   // same layout as the engine's, prepared on the message thread
 
     std::atomic<std::uint64_t> reference { 0 };
     std::atomic<int> level { 1 };
@@ -130,6 +137,9 @@ private:
         std::atomic<float>* spaceMode = nullptr;
         std::atomic<float>* panSide = nullptr;
         std::atomic<float>* bypass = nullptr;
+        std::atomic<float>* output = nullptr;
+        std::atomic<float>* autoGain = nullptr;
+        std::atomic<float>* spaceComp = nullptr;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TrackProcessor)

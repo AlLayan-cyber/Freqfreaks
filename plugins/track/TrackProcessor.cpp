@@ -42,6 +42,10 @@ TrackProcessor::TrackProcessor()
     raw.spaceMode   = parameters.getRawParameterValue (spaceMode);
     raw.panSide     = parameters.getRawParameterValue (panSide);
     raw.bypass      = parameters.getRawParameterValue (bypass);
+    raw.output      = parameters.getRawParameterValue (output);
+    raw.autoGain    = parameters.getRawParameterValue (autoGain);
+    raw.spaceComp   = parameters.getRawParameterValue (spaceComp);
+    displayBank.prepare (48000.0);
 
     claimSlot (SharedBus::makeInstanceId());
     refreshBusName();
@@ -95,6 +99,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackProcessor::createLayout
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { panSide, 1 }, "Pan Away Side",
                                                         StringArray { "Auto", "Left", "Right" }, 0));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { bypass, 1 }, "Bypass", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { output, 1 }, "Output", NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f,
+                                                       AudioParameterFloatAttributes().withLabel ("dB")
+                                                           .withStringFromValueFunction ([] (float v, int) { return (v > 0.05f ? "+" : "") + String (v, 1) + " dB"; })));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { autoGain, 1 }, "Auto Gain", false));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { spaceComp, 1 }, "Space Compensation", true));
     return layout;
 }
 
@@ -120,6 +129,7 @@ bool TrackProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void TrackProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
+    displayBank.prepare (sampleRate);
     monoScratch.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
     setLatencySamples (engine.latencySamples());
 }
@@ -139,6 +149,9 @@ TrackParams TrackProcessor::readParams() const noexcept
     p.sensitivityDb = raw.sensitivity->load();
     p.spaceMode     = (SpaceMode) juce::jlimit (0, 2, (int) raw.spaceMode->load());
     p.bypass        = raw.bypass->load() > 0.5f;
+    p.outputDb      = raw.output->load();
+    p.autoGain      = raw.autoGain->load() > 0.5f;
+    p.spaceComp     = raw.spaceComp->load() > 0.5f;
 
     const int side = (int) raw.panSide->load();
     p.panSign = side == 1 ? 1.0f : side == 2 ? -1.0f : ((instanceId() & 1u) ? 1.0f : -1.0f);
@@ -240,8 +253,14 @@ void TrackProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         d.eqDb[b]        = budget.eq[i];
         d.restDb[b]      = budget.rest[i];
     }
+    for (int k = 0; k < kNumBells; ++k)
+    {
+        d.eqBells[k] = engine.processor().currentEqCut()[(size_t) k];
+        d.spaceBells[k] = engine.processor().currentSpaceCut()[(size_t) k];
+    }
     d.amount = params.amount;
     d.spaceAmount = params.spaceAmount;
+    d.compensationDb = engine.compensationDb();
     d.flags = (params.bypass ? bus::flagBypassed : 0u) | (referenceLost ? bus::flagReferenceLost : 0u)
             | (params.link ? 0u : bus::flagLinkOff);
     bus.publish (d);

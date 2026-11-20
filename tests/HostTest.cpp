@@ -272,6 +272,9 @@ int main (int argc, char** argv)
     }
 
     // 2. Guitar yields to vocal: 2 kHz goes down in the Mid, 200 Hz stays.
+    //    Space compensation lowers the whole track a little; it is checked separately in the core tests.
+    if (auto* comp = findParam (*guitar, "Space Compensation"))
+        comp->setValueNotifyingHost (0.0f);
     auto guitarState = stateOf (*guitar);
     guitarState.setProperty ("referenceId", vocalId, nullptr);
     guitarState.setProperty ("referenceName", "Vocal", nullptr);

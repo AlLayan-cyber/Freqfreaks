@@ -37,8 +37,8 @@ private:
     (cuts per bell on both channels) to stereo audio.
 
     Space: the Mid signal is cut by the space bells; the removed energy is sent
-    back as Side through matching band-passes, scaled so the band's total energy
-    stays (approximately) the same. Spread/Decorrelate pass that energy through a
+    back as Side through matching band-passes, weighted so the total energy at
+    every frequency stays the same (see BellBank::fitTransfer). Spread/Decorrelate pass that energy through a
     decorrelator (wider image); Pan Away keeps it coherent (moves the band left
     or right). Then the EQ bells cut both channels.
 
@@ -52,8 +52,9 @@ public:
 
     const BellBank& bank() const noexcept   { return bells; }
 
-    /** Targets in positive dB of cut. panSign: +1 moves energy left, -1 right. */
-    void setTargets (const BellArray& eqCutDb, const BellArray& spaceCutDb,
+    /** Targets in positive dB of cut. transferWeights come from BellBank::fitTransfer().
+        panSign: +1 moves energy left, -1 right. */
+    void setTargets (const BellArray& eqCutDb, const BellArray& spaceCutDb, const BellArray& transferWeights,
                      SpaceMode mode, float panSign) noexcept;
 
     void process (float* left, float* right, int numSamples) noexcept;
@@ -70,14 +71,13 @@ private:
     BellBank bells;
     Decorrelator shortDecorrelator, longDecorrelator;
 
-    BellArray eqTarget {}, spaceTarget {}, eqNow {}, spaceNow {};
+    BellArray eqTarget {}, spaceTarget {}, transferTarget {}, eqNow {}, spaceNow {}, transferNow {};
     SpaceMode mode = SpaceMode::spread;
     float panSign = 1.0f, glideCoeff = 0.9f;
 
     std::array<BiquadCoeffs, kNumBells> eqCoeffs {}, spaceCoeffs {}, bandpassCoeffs {};
-    std::array<float, kNumBells> transferGain {};
     // A bell at 0 dB is skipped entirely: bit-exact pass-through and less CPU.
-    std::array<bool, kNumBells> eqActive {}, spaceActive {};
+    std::array<bool, kNumBells> eqActive {}, spaceActive {}, transferActive {};
     std::array<BiquadState, kNumBells> eqLeft {}, eqRight {}, spaceMid {}, transferBand {};
 };
 

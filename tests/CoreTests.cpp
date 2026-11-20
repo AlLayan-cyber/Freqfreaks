@@ -313,6 +313,86 @@ void testRangeLimits()
     CHECK (sb.cutAt (1000.0f, engine.eqBells()) + sb.cutAt (1000.0f, engine.spaceBells()) > 3.0f);
 }
 
+/** Runs a broadband track against a mid-range reference; returns the output/input energy in dB. */
+double runCompensation (const ff::TrackParams& p, float* compDb = nullptr)
+{
+    ff::TrackEngine e;
+    e.prepare (kRate, 512);
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    const auto& layout = ff::BandLayout::get();
+    for (int b = 0; b < ff::kNumBands; ++b)
+    {
+        const float hz = layout.centreHz[(size_t) b];
+        ref.midDb[(size_t) b] = (hz > 300.0f && hz < 5000.0f) ? -36.0f : -110.0f;
+    }
+
+    const int n = 512 * 560;
+    const auto src = noise (n, 77, 0.2f);
+    auto l = src, r = src;
+    for (int i = 0; i < n; i += 512)
+        e.process (l.data() + i, r.data() + i, 512, p, ref);
+
+    const int lat = e.latencySamples(), from = n / 2;
+    double in = 0.0, out = 0.0;
+    for (int i = from; i < n; ++i)
+    {
+        in += 2.0 * (double) src[(size_t) (i - lat)] * src[(size_t) (i - lat)];
+        out += (double) l[(size_t) i] * l[(size_t) i] + (double) r[(size_t) i] * r[(size_t) i];
+    }
+    if (compDb != nullptr)
+        *compDb = e.compensationDb();
+    return 10.0 * std::log10 (out / in);
+}
+
+void testLoudness()
+{
+    ff::TrackParams p;
+    p.amount = 0.7f;
+    p.speed = 1.0f;
+
+    // Manual output trim is exact.
+    p.spaceComp = false;
+    const double base = runCompensation (p);
+    p.outputDb = 6.0f;
+    CHECK_NEAR (runCompensation (p) - base, 6.0, 0.05);
+    p.outputDb = 0.0f;
+
+    // Space compensation: turning Space up never makes the track louder.
+    p.spaceComp = true;
+    for (bool link : { true, false })
+    {
+        p.link = link;
+        float comp0 = 0.0f, comp100 = 0.0f;
+        p.spaceAmount = 0.0f;
+        const double at0 = runCompensation (p, &comp0);
+        p.spaceAmount = 1.0f;
+        const double at100 = runCompensation (p, &comp100);
+        p.spaceAmount = 2.0f;
+        const double at200 = runCompensation (p);
+        std::printf ("  info: Space comp, Link %s: energy %.2f / %.2f / %.2f dB at 0/100/200 %%, comp %.2f -> %.2f dB\n",
+                     link ? "on " : "off", at0, at100, at200, comp0, comp100);
+        CHECK_NEAR (comp0, 0.0, 0.05);           // nothing to compensate at 0 %
+        CHECK (at100 <= at0 + 0.05);             // never louder...
+        CHECK (at200 <= at0 + 0.05);
+        CHECK (at100 >= at0 - 0.6);              // ...and only the width allowance quieter
+        CHECK (comp100 <= 0.0f);
+    }
+
+    // Auto: back to the input's loudness (within the width allowance).
+    p.link = true;
+    p.autoGain = true;
+    for (float space : { 0.0f, 1.0f })
+    {
+        p.spaceAmount = space;
+        float comp = 0.0f;
+        const double e = runCompensation (p, &comp);
+        std::printf ("  info: Auto at Space %.0f %%: energy %.2f dB (comp +%.2f dB)\n", space * 100.0f, e, comp);
+        CHECK (std::abs (e) < 0.4);
+        CHECK (comp >= 0.0f && comp <= 6.0f);
+    }
+}
+
 void runProcessor (ff::StereoProcessor& p, std::vector<float>& l, std::vector<float>& r)
 {
     for (size_t pos = 0; pos < l.size(); pos += 256)
@@ -347,7 +427,12 @@ void testStereoProcessor()
         ff::BellArray eq {}, space {};
         space[7] = 6.0f;
         space[8] = 6.0f;
-        p.setTargets (eq, space, ff::SpaceMode::spread, 1.0f);
+        ff::BellArray tw {};
+        for (int i = 0; i < 10; ++i)
+            p.bank().fitTransfer (space, tw);
+        std::printf ("  info: transfer energy error %.2f dB\n", p.bank().transferErrorDb (space, tw));
+        CHECK (p.bank().transferErrorDb (space, tw) < 0.3f);
+        p.setTargets (eq, space, tw, ff::SpaceMode::spread, 1.0f);
 
         auto mono = noise (n, 3);
         auto l = mono, r = mono;
@@ -367,10 +452,15 @@ void testStereoProcessor()
         CHECK (midDrop < -3.0);
         CHECK (sideRise > -6.0);
 
-        // Stereo energy (L^2 + R^2) in that band stays within 2 dB.
+        // Stereo energy (L^2 + R^2) stays the same: in that band and over the whole signal.
         const double energyIn = 2.0 * bandPower (m0, hz, 4.0, settle);
         const double energyOut = bandPower (l, hz, 4.0, settle) + bandPower (r, hz, 4.0, settle);
-        CHECK_NEAR (10.0 * std::log10 (energyOut / energyIn), 0.0, 2.0);
+        CHECK_NEAR (10.0 * std::log10 (energyOut / energyIn), 0.0, 0.3);
+        const double totalOut = power (l, settle) + power (r, settle);
+        const double totalIn = 2.0 * power (m0, settle);
+        std::printf ("  info: Spread, total energy change %.2f dB, band %.2f dB\n",
+                     10.0 * std::log10 (totalOut / totalIn), 10.0 * std::log10 (energyOut / energyIn));
+        CHECK_NEAR (10.0 * std::log10 (totalOut / totalIn), 0.0, 0.15);
 
         // Below the Space bells nothing changes.
         const double low = 10.0 * std::log10 (bandPower (m, 120.0, 4.0, settle) / bandPower (m0, 120.0, 4.0, settle));
@@ -383,7 +473,10 @@ void testStereoProcessor()
         p.prepare (kRate);
         ff::BellArray eq {}, space {};
         space[8] = 8.0f;
-        p.setTargets (eq, space, ff::SpaceMode::panAway, -1.0f);   // to the right
+        ff::BellArray tw {};
+        for (int i = 0; i < 10; ++i)
+            p.bank().fitTransfer (space, tw);
+        p.setTargets (eq, space, tw, ff::SpaceMode::panAway, -1.0f);   // to the right
         auto mono = noise (n, 4);
         auto l = mono, r = mono;
         runProcessor (p, l, r);
@@ -397,7 +490,8 @@ void testStereoProcessor()
         p.prepare (kRate);
         ff::BellArray eq {}, space {};
         eq[8] = 6.0f;
-        p.setTargets (eq, space, ff::SpaceMode::spread, 1.0f);
+        ff::BellArray none {};
+        p.setTargets (eq, space, none, ff::SpaceMode::spread, 1.0f);
         auto mono = noise (n, 5);
         auto l = mono, r = mono;
         runProcessor (p, l, r);
@@ -557,6 +651,7 @@ int main()
         { "range limits", testRangeLimits },
         { "stereo processor", testStereoProcessor },
         { "track engine", testTrackEngine },
+        { "loudness compensation", testLoudness },
         { "shared bus", testSharedBus },
     };
 

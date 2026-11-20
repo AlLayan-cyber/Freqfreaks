@@ -62,6 +62,12 @@ private:
     juce::TextButton modeSpread { "Spread" }, modePan { "Pan Away" }, modeDecor { "Decorrelate" };
     juce::TextButton sideAuto { "Auto" }, sideLeft { "L" }, sideRight { "R" };
 
+    juce::Slider outputSlider;
+    juce::TextButton autoGainButton { "Auto" }, spaceCompButton { "Space comp" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttach;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttach, spaceCompAttach;
+    float shownCompensationDb = 0.0f;
+
     ParamRow eqDepth, rangeLow, rangeHigh, bassMono, monoSafety, sensitivity;
 
     // Layout rectangles used by paint().

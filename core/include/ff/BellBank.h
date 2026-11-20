@@ -6,6 +6,7 @@
 #include "ff/Bands.h"
 
 #include <array>
+#include <complex>
 
 namespace ff
 {
@@ -49,6 +50,19 @@ public:
     /** Exact cut (positive dB) of the whole bank at any frequency, for drawing. */
     float cutAt (float hz, const BellArray& gains) const noexcept;
 
+    /** Weights for the Space transfer band-passes (one per bell, 0 dB peak, same Q).
+
+        Space cuts the Mid with the space bells (response H) and sends what it removed
+        to the Side through the band-passes: T(f) = sum_k w_k BP_k(f). Energy is kept
+        when |T(f)|^2 = 1 - |H(f)|^2 at every frequency. The band-passes overlap and
+        add coherently, so the weights are fitted to that target on a fine grid
+        (warm-started from the previous call). */
+    void fitTransfer (const BellArray& spaceCutDb, BellArray& weights) const noexcept;
+
+    /** |T(f)|^2 / (1 - |H(f)|^2) error report for tests: worst ratio in dB over the grid
+        where at least minMovedDb of energy is moved. */
+    float transferErrorDb (const BellArray& spaceCutDb, const BellArray& weights, float minMovedDb = 0.5f) const noexcept;
+
     /** Predicted cut (positive dB) in each analysis band for the given bell cuts. */
     BandArray response (const BellArray& gains) const noexcept;
 
@@ -58,6 +72,11 @@ private:
     double rate = 48000.0;
     BellArray fc {}, qs {};
     std::array<std::array<float, kNumBells>, kNumBands> shape {};   // cut in band b per dB of bell k
+
+    static constexpr int kGrid = 64;                                 // fine log grid for the transfer fit
+    std::array<std::array<float, kNumBells>, kGrid> gridShape {};    // cut at grid point j per dB of bell k
+    std::array<std::array<std::complex<float>, kNumBells>, kGrid> gridBandpass {};
+    float transferStep = 0.1f;
 };
 
 } // namespace ff
