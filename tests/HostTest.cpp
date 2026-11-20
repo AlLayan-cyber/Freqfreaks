@@ -13,9 +13,11 @@
 #include <juce_events/juce_events.h>
 
 #include "ff/Biquad.h"
+#include "ff/SharedBus.h"
 
 #include <cstdio>
 #include <random>
+#include <thread>
 
 namespace
 {
@@ -213,12 +215,16 @@ int serveReference (const juce::String& trackPath, double seconds, const juce::F
     const auto start = juce::Time::getMillisecondCounterHiRes();
     while (juce::Time::getMillisecondCounterHiRes() - start < seconds * 1000.0)
     {
-        // No sleeping: macOS App Nap stretches sleeps of a windowless background process,
-        // which would make the published data go stale. Running faster than real time is fine,
-        // the other process always reads the latest analysis.
+        // Real-time pacing like a DAW (one block per 10.7 ms), but by yielding instead of
+        // sleeping: macOS App Nap stretches the sleeps of a windowless background process,
+        // and a writer that never pauses keeps the reader colliding with its writes.
         src.fill (buffer);
         vocal->processBlock (buffer, midi);
-        if (++blocks % 64 == 0)
+        ++blocks;
+        const double due = start + (double) blocks * kBlock * 1000.0 / kRate;
+        while (juce::Time::getMillisecondCounterHiRes() < due)
+            std::this_thread::yield();
+        if (blocks % 32 == 0)
             juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
     }
     return 0;
@@ -325,6 +331,9 @@ int main (int argc, char** argv)
         setState (*guitar, st);
 
         // Real-time pacing so the child's analysis keeps up.
+        ff::SharedBus probe;
+        const auto guitarBusId = (std::uint64_t) stateOf (*guitar).getProperty ("instanceId").toString().getHexValue64();
+        int measured = 0, lost = 0;
         Measure m;
         juce::AudioBuffer<float> g (2, kBlock), dry (2, kBlock);
         juce::MidiBuffer midi;
@@ -337,11 +346,19 @@ int main (int argc, char** argv)
             guitar->processBlock (g, midi);
             m.in2k.add (dry, measure);
             m.out2k.add (g, measure);
+            if (measure)
+            {
+                ff::bus::TrackData own;
+                ++measured;
+                if (! probe.read (guitarBusId, own) || (own.flags & ff::bus::flagReferenceLost) != 0)
+                    ++lost;
+            }
             juce::Thread::sleep (8);
             if (b % 8 == 0)
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
         }
-        check (m.drop2k() < -6.0, "guitar yields to a reference in another process (" + juce::String (m.drop2k(), 2) + " dB)");
+        check (m.drop2k() < -6.0, "guitar yields to a reference in another process (" + juce::String (m.drop2k(), 2)
+                                      + " dB, reference missing in " + juce::String (lost) + " of " + juce::String (measured) + " blocks)");
         child.kill();
     }
 
