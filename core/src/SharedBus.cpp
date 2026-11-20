@@ -45,7 +45,7 @@ namespace
     template <typename Data>
     bool seqRead (const std::atomic<std::uint32_t>& sequence, const Data& source, Data& target) noexcept
     {
-        for (int attempt = 0; attempt < 16; ++attempt)
+        for (int attempt = 0; attempt < 64; ++attempt)
         {
             const auto before = sequence.load (std::memory_order_acquire);
             if (before & 1u)

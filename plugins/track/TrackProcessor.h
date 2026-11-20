@@ -111,6 +111,8 @@ private:
     char nameForBus[bus::kNameLength] {};
 
     bus::TrackData publishData;
+    ReferenceSnapshot lastReference;           // audio thread only
+    std::uint64_t lastReferenceId = 0, lastReferenceMs = 0;
     std::vector<float> monoScratch;
 
     struct Raw

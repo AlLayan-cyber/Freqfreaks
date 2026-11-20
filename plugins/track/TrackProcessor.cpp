@@ -171,10 +171,21 @@ void TrackProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     {
         bus::TrackData refData;
         bool stale = true;
-        if (bus.read (refId, refData, &stale) && ! stale)
+        const bool readOk = bus.read (refId, refData, &stale);
+        const auto now = SharedBus::nowMs();
+
+        if (readOk && ! stale)
         {
             ref.valid = true;
             std::copy (std::begin (refData.levelMidDb), std::end (refData.levelMidDb), ref.midDb.begin());
+            lastReference = ref;
+            lastReferenceId = refId;
+            lastReferenceMs = now;
+        }
+        else if (! readOk && lastReferenceId == refId && now - lastReferenceMs < bus::kStaleAfterMs)
+        {
+            // The reference was being written at that very moment: keep using its last analysis.
+            ref = lastReference;
         }
         else
         {

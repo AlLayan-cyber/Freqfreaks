@@ -341,7 +341,7 @@ int main (int argc, char** argv)
             if (b % 8 == 0)
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
         }
-        check (m.drop2k() < -2.0, "guitar yields to a reference in another process (" + juce::String (m.drop2k(), 2) + " dB)");
+        check (m.drop2k() < -6.0, "guitar yields to a reference in another process (" + juce::String (m.drop2k(), 2) + " dB)");
         child.kill();
     }
 
