@@ -37,6 +37,11 @@ void Fft::forward (std::complex<float>* data) const noexcept
             std::swap (data[i], data[r]);
     }
 
+    // Butterflies in plain real arithmetic: std::complex multiplication goes through a
+    // NaN/Inf-safe library call (__mulsc3) without -ffast-math, several times slower.
+    float* d = reinterpret_cast<float*> (data);   // std::complex<float> is layout-compatible with float[2]
+    const float* tw = reinterpret_cast<const float*> (twiddles.data());
+
     for (int len = 2; len <= n; len <<= 1)
     {
         const int half = len >> 1;
@@ -45,11 +50,15 @@ void Fft::forward (std::complex<float>* data) const noexcept
         {
             for (int k = 0; k < half; ++k)
             {
-                const auto w = twiddles[(size_t) (k * stride)];
-                const auto a = data[start + k];
-                const auto b = data[start + k + half] * w;
-                data[start + k] = a + b;
-                data[start + k + half] = a - b;
+                const float wr = tw[2 * k * stride], wi = tw[2 * k * stride + 1];
+                float* a = d + 2 * (start + k);
+                float* b = d + 2 * (start + k + half);
+                const float br = b[0] * wr - b[1] * wi;
+                const float bi = b[0] * wi + b[1] * wr;
+                b[0] = a[0] - br;
+                b[1] = a[1] - bi;
+                a[0] += br;
+                a[1] += bi;
             }
         }
     }

@@ -393,6 +393,94 @@ void testLoudness()
     }
 }
 
+/** Click detector: a sine under active release, one switch in the middle. A click shows as
+    a jump of the second difference above both steady states (before and after). */
+struct ClickRun
+{
+    std::vector<float> l, r;
+};
+
+ClickRun runClick (const std::function<void (ff::TrackParams&, ff::ReferenceSnapshot&)>& change, bool fromStart)
+{
+    constexpr int block = 256;
+    ff::TrackEngine e;
+    e.prepare (kRate, block);
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    const auto& layout = ff::BandLayout::get();
+    for (int b = 0; b < ff::kNumBands; ++b)
+    {
+        const float hz = layout.centreHz[(size_t) b];
+        ref.midDb[(size_t) b] = (hz > 300.0f && hz < 4000.0f) ? -40.0f : -110.0f;
+    }
+
+    ff::TrackParams p;
+    p.amount = 0.9f;
+    p.speed = 0.5f;
+    if (fromStart && change)
+        change (p, ref);
+
+    const int n = block * 560;
+    ClickRun out { std::vector<float> ((size_t) n), std::vector<float> ((size_t) n) };
+    for (int i = 0; i < n; ++i)
+    {
+        const float s = 0.3f * (float) std::sin (2.0 * kPi * 1000.0 * i / kRate);
+        const float s2 = 0.08f * (float) std::sin (2.0 * kPi * 1500.0 * i / kRate + 1.0);
+        out.l[(size_t) i] = s + s2;
+        out.r[(size_t) i] = s - 0.5f * s2;
+    }
+    for (int i = 0; i < n; i += block)
+    {
+        if (! fromStart && i == block * 400 && change)
+            change (p, ref);
+        e.process (out.l.data() + i, out.r.data() + i, block, p, ref);
+    }
+    return out;
+}
+
+double peakSecondDifference (const ClickRun& run, int from, int to)
+{
+    double m = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        const double a = run.l[(size_t) i] - 2.0 * run.l[(size_t) i - 1] + run.l[(size_t) i - 2];
+        const double b = run.r[(size_t) i] - 2.0 * run.r[(size_t) i - 1] + run.r[(size_t) i - 2];
+        m = std::max ({ m, std::abs (a), std::abs (b) });
+    }
+    return m;
+}
+
+void testClicks()
+{
+    using Change = std::function<void (ff::TrackParams&, ff::ReferenceSnapshot&)>;
+    const std::pair<const char*, Change> cases[] = {
+        { "Space mode -> Pan Away",    [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.spaceMode = ff::SpaceMode::panAway; } },
+        { "Space mode -> Decorrelate", [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.spaceMode = ff::SpaceMode::decorrelate; } },
+        { "Pan Away side flip",        [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.spaceMode = ff::SpaceMode::panAway; p.panSign = -p.panSign; } },
+        { "bypass on",                 [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.bypass = true; } },
+        { "Amount 90 -> 0 %",          [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.amount = 0.0f; } },
+        { "Space Amount 100 -> 0 %",   [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.spaceAmount = 0.0f; } },
+        { "Hub trim to 0",             [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.hubAmount = 0.0f; } },
+        { "Bass Mono 150 -> 1200 Hz",  [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.bassMonoHz = 1200.0f; } },
+        { "Link off",                  [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.link = false; } },
+        { "Auto gain on",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.autoGain = true; } },
+        { "Output +6 dB",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.outputDb = 6.0f; } },
+        { "reference lost",            [] (ff::TrackParams&, ff::ReferenceSnapshot& r) { r.valid = false; } },
+    };
+
+    const int from = 256 * 400, to = from + (int) (0.09 * kRate);
+    const double before = peakSecondDifference (runClick (nullptr, false), from, to);
+    for (const auto& [name, change] : cases)
+    {
+        const double peak = peakSecondDifference (runClick (change, false), from, to);
+        const double after = peakSecondDifference (runClick (change, true), from, to);
+        const double ratio = peak / std::max (before, after);
+        if (ratio > 1.5)
+            std::printf ("  click: %s (x%.2f)\n", name, ratio);
+        CHECK (ratio < 1.5);
+    }
+}
+
 void runProcessor (ff::StereoProcessor& p, std::vector<float>& l, std::vector<float>& r)
 {
     for (size_t pos = 0; pos < l.size(); pos += 256)
@@ -680,6 +768,7 @@ int main()
         { "stereo processor", testStereoProcessor },
         { "track engine", testTrackEngine },
         { "loudness compensation", testLoudness },
+        { "no clicks on switches", testClicks },
         { "shared bus", testSharedBus },
     };
 

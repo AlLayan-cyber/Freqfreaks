@@ -14,6 +14,7 @@ void TrackEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
     analyzer.prepare (rate);
     smoother.prepare (analyzer.frameRateHz());
+    paramCoeff = (float) std::exp (-1.0 / (0.060 * analyzer.frameRateHz()));   // ~60 ms knob smoothing
     stereo.prepare (rate);
 
     gainCoeff = (float) std::exp (-1.0 / (0.15 * rate));   // ~150 ms output-gain glide
@@ -37,6 +38,7 @@ void TrackEngine::reset() noexcept
     delayPos = 0;
     referenceActive = false;
     compTargetDb = lossVsInputDb = spaceVsAllEqDb = 0.0f;
+    amountNow = spaceNow = -1.0f;
     outputGain = outputGainTarget = 1.0f;
 }
 
@@ -56,9 +58,16 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
     smoother.setSpeed (p.speed);
     const auto& smoothed = smoother.process (need);
 
+    // Knob and Hub moves are smoothed here, before the budget: a jump of Amount or Space Amount
+    // turns into a ~60 ms ramp instead of a step in every band at once.
+    const float amountTarget = std::clamp (p.amount * p.hubAmount, 0.0f, 2.0f);
+    const float spaceTarget = std::clamp (p.spaceAmount * p.hubSpace, 0.0f, 2.0f);
+    amountNow = amountNow < 0.0f ? amountTarget : amountTarget + paramCoeff * (amountNow - amountTarget);
+    spaceNow = spaceNow < 0.0f ? spaceTarget : spaceTarget + paramCoeff * (spaceNow - spaceTarget);
+
     BudgetSettings bs;
-    bs.amount = std::clamp (p.amount * p.hubAmount, 0.0f, 2.0f);
-    bs.spaceAmount = std::clamp (p.spaceAmount * p.hubSpace, 0.0f, 2.0f);
+    bs.amount = amountNow;
+    bs.spaceAmount = spaceNow;
     bs.link = p.link;
     bs.eqDepthDb = p.eqDepthDb;
     bs.monoSafetyDb = p.monoSafetyDb;

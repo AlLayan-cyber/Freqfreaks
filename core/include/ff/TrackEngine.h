@@ -91,6 +91,7 @@ private:
     bool referenceActive = false;
 
     float compTargetDb = 0.0f, lossVsInputDb = 0.0f, spaceVsAllEqDb = 0.0f;
+    float amountNow = -1.0f, spaceNow = -1.0f, paramCoeff = 0.8f;   // smoothed knobs (control rate)
     float outputGain = 1.0f, outputGainTarget = 1.0f, gainCoeff = 0.999f;
 
     int lookahead = 0, delayPos = 0;

@@ -158,7 +158,23 @@ TrackParams TrackProcessor::readParams() const noexcept
     return p;
 }
 
+juce::AudioProcessorParameter* TrackProcessor::getBypassParameter() const
+{
+    return parameters.getParameter (trackParams::bypass);
+}
+
 void TrackProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    process (buffer, false);
+}
+
+void TrackProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    // Hosts that bypass on their own still get the lookahead delay and a fade, not a jump.
+    process (buffer, true);
+}
+
+void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass)
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
@@ -166,6 +182,7 @@ void TrackProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         return;
 
     auto params = readParams();
+    params.bypass = params.bypass || forceBypass;
 
     bus::HubData& hub = hubScratch;
     float trim = 1.0f;

@@ -51,7 +51,13 @@ public:
     void releaseResources() override {}
     bool isBusesLayoutSupported (const BusesLayout&) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     using AudioProcessor::processBlock;
+    using AudioProcessor::processBlockBypassed;
+
+    /** The DAW's bypass button drives our own Bypass: it fades out and keeps the latency,
+        so switching never shifts the audio by the lookahead (a click). */
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override                        { return true; }
@@ -103,6 +109,7 @@ private:
     void refreshBusName();
     void applyRemoteCommand();
     TrackParams readParams() const noexcept;
+    void process (juce::AudioBuffer<float>&, bool forceBypass);
 
     juce::AudioProcessorValueTreeState parameters;
     SharedBus bus;

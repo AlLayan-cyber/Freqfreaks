@@ -71,12 +71,19 @@ public:
 
 private:
     float largestEigen (const BandArray& weight) const noexcept;
+    float cachedEigen (const BandArray& weight) const noexcept;
+
+    // The step of the weighted fit depends only on the weights, which change only when
+    // Range / Bass Mono change: keep the last two (EQ and Space) instead of recomputing.
+    struct EigenCache { BandArray weight {}; float value = 0.0f; };
+    mutable std::array<EigenCache, 2> eigenCache {};
+    mutable int eigenNext = 0;
 
     double rate = 48000.0;
     BellArray fc {}, qs {};
     std::array<std::array<float, kNumBells>, kNumBands> shape {};   // cut in band b per dB of bell k
 
-    static constexpr int kGrid = 64;                                 // fine log grid for the transfer fit
+    static constexpr int kGrid = 32;                                 // log grid for the transfer fit
     std::array<std::array<float, kNumBells>, kGrid> gridShape {};    // cut at grid point j per dB of bell k
     std::array<std::array<std::complex<float>, kNumBells>, kGrid> gridBandpass {};
     float transferStep = 0.1f;

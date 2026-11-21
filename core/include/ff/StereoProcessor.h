@@ -73,7 +73,11 @@ private:
 
     BellArray eqTarget {}, spaceTarget {}, transferTarget {}, eqNow {}, spaceNow {}, transferNow {};
     SpaceMode mode = SpaceMode::spread;
-    float panSign = 1.0f, glideCoeff = 0.9f;
+    float panTarget = 1.0f, panNow = 1.0f, glideCoeff = 0.9f, modeCoeff = 0.9f;
+
+    // Mode crossfade: how much of the Spread / Pan Away / Decorrelate signal is used now.
+    std::array<float, 3> modeMix { 1.0f, 0.0f, 0.0f };
+    std::array<float, 3> modeGainPrev { 1.0f, 0.0f, 0.0f };   // per-sample ramps start here
 
     std::array<BiquadCoeffs, kNumBells> eqCoeffs {}, spaceCoeffs {}, bandpassCoeffs {};
     // A bell at 0 dB is skipped entirely: bit-exact pass-through and less CPU.

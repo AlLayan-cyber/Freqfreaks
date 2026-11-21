@@ -310,7 +310,35 @@ int main (int argc, char** argv)
         compare->setValueNotifyingHost (0.0f);
     }
 
-    // 5. Hub Bypass All switches every track off.
+    // 5. The DAW's bypass button: a fade, and the audio stays delayed by the reported latency.
+    if (auto* hostBypass = guitar->getBypassParameter())
+    {
+        hostBypass->setValueNotifyingHost (1.0f);
+        juce::AudioBuffer<float> g (2, kBlock);
+        juce::MidiBuffer midi;
+        std::vector<float> in, out;
+        for (int b = 0; b < (int) (2.0 * kRate / kBlock); ++b)
+        {
+            guitarSrc.fill (g);
+            in.insert (in.end(), g.getReadPointer (0), g.getReadPointer (0) + kBlock);
+            guitar->processBlock (g, midi);
+            out.insert (out.end(), g.getReadPointer (0), g.getReadPointer (0) + kBlock);
+        }
+        const int lat = guitar->getLatencySamples();
+        double err = 0.0;
+        for (size_t i = in.size() / 2; i < in.size(); ++i)
+            err = std::max (err, (double) std::abs (out[i] - in[i - (size_t) lat]));
+        check (err < 1.0e-3, "DAW bypass keeps the latency (max error " + juce::String (err, 6) + ")");
+        hostBypass->setValueNotifyingHost (0.0f);
+        Measure m;
+        run (2.0, *guitar, vocal.get(), hub.get(), guitarSrc, &vocalSrc, m, 10.0);
+    }
+    else
+    {
+        check (false, "Track exposes its Bypass to the DAW");
+    }
+
+    // 6. Hub Bypass All switches every track off.
     if (auto* bypassAll = findParam (*hub, "Bypass All"))
     {
         bypassAll->setValueNotifyingHost (1.0f);
@@ -324,7 +352,7 @@ int main (int argc, char** argv)
         check (false, "Hub exposes Bypass All");
     }
 
-    // 6. The Hub's remote panel moves the track's own Amount knob.
+    // 7. The Hub's remote panel moves the track's own Amount knob.
     {
         ff::SharedBus remoteBus;
         const auto gid = (std::uint64_t) stateOf (*guitar).getProperty ("instanceId").toString().getHexValue64();
@@ -346,7 +374,7 @@ int main (int argc, char** argv)
         run (1.0, *guitar, vocal.get(), hub.get(), guitarSrc, &vocalSrc, m, 10.0);
     }
 
-    // 7. Reference in another process (DAWs that sandbox plug-ins).
+    // 8. Reference in another process (DAWs that sandbox plug-ins).
     vocal.reset();
     {
         juce::ChildProcess child;

@@ -123,6 +123,18 @@ float BellBank::largestEigen (const BandArray& weight) const noexcept
     return (float) std::max (lambda, 1.0e-6);
 }
 
+float BellBank::cachedEigen (const BandArray& weight) const noexcept
+{
+    for (const auto& e : eigenCache)
+        if (e.value > 0.0f && e.weight == weight)
+            return e.value;
+    auto& slot = eigenCache[(size_t) eigenNext];
+    eigenNext = (eigenNext + 1) % (int) eigenCache.size();
+    slot.weight = weight;
+    slot.value = largestEigen (weight);
+    return slot.value;
+}
+
 BandArray BellBank::rangeWeights (float lowHz, float highHz, float outsideWeight) noexcept
 {
     const auto& layout = BandLayout::get();
@@ -151,10 +163,12 @@ void BellBank::fit (const BandArray& cutDb, const BandArray& weight, const std::
             gains[(size_t) k] = 0.0f;
 
     // Exact step for this weighting (the largest eigenvalue of A^T W A).
-    const float step = 1.0f / largestEigen (weight);
+    const float step = 1.0f / cachedEigen (weight);
 
     // Projected gradient descent on 0.5 * sum w (A g - cut)^2 with 0 <= g <= maxCut.
-    for (int it = 0; it < 120; ++it)
+    // Warm-started every analysis frame (~90 per second), so a few dozen steps per frame
+    // converge within tens of milliseconds while keeping the audio thread's work small.
+    for (int it = 0; it < 32; ++it)
     {
         std::array<float, kNumBands> residual {};
         for (int b = 0; b < kNumBands; ++b)
@@ -216,8 +230,8 @@ void BellBank::fitTransfer (const BellArray& spaceCutDb, BellArray& weights) con
             weights[(size_t) k] = 0.6f * std::sqrt (std::max (0.0f, 1.0f - c * c));
         }
 
-    // Projected gradient on 0.5 * sum_j (|T_j| - target_j)^2, w >= 0.
-    for (int it = 0; it < 60; ++it)
+    // Projected gradient on 0.5 * sum_j (|T_j| - target_j)^2, w >= 0 (warm-started per frame).
+    for (int it = 0; it < 16; ++it)
     {
         std::array<float, kNumBells> grad {};
         for (int j = 0; j < kGrid; ++j)
