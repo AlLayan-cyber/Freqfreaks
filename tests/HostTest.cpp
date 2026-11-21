@@ -197,6 +197,41 @@ void run (double seconds, juce::AudioPluginInstance& guitar, juce::AudioPluginIn
     }
 }
 
+/** The reference's audio callback, run like a DAW runs one: a real-time thread, one block per
+    10.7 ms. (A plain loop in a windowless background process is throttled by macOS App Nap,
+    which starved the published analysis in CI.) */
+class ReferenceCallback : public juce::Thread
+{
+public:
+    ReferenceCallback (juce::AudioPluginInstance& p, double s)
+        : Thread ("reference audio"), plugin (p), seconds (s) {}
+
+    void run() override
+    {
+        Source src (11, 0.03f, true);
+        juce::AudioBuffer<float> buffer (2, kBlock);
+        juce::MidiBuffer midi;
+        long blocks = 0;
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        while (! threadShouldExit() && juce::Time::getMillisecondCounterHiRes() - start < seconds * 1000.0)
+        {
+            src.fill (buffer);
+            plugin.processBlock (buffer, midi);
+            ++blocks;
+            const double due = start + (double) blocks * kBlock * 1000.0 / kRate;
+            const double wait = due - juce::Time::getMillisecondCounterHiRes();
+            if (wait > 1.0)
+                juce::Thread::sleep ((int) wait);
+            while (juce::Time::getMillisecondCounterHiRes() < due)
+                std::this_thread::yield();
+        }
+    }
+
+private:
+    juce::AudioPluginInstance& plugin;
+    double seconds;
+};
+
 int serveReference (const juce::String& trackPath, double seconds, const juce::File& idFile)
 {
     juce::AudioPluginFormatManager fm;
@@ -208,25 +243,14 @@ int serveReference (const juce::String& trackPath, double seconds, const juce::F
     // The id goes through a file: a pipe would only be readable once this process ends.
     idFile.replaceWithText (stateOf (*vocal).getProperty ("instanceId").toString());
 
-    Source src (11, 0.03f, true);
-    juce::AudioBuffer<float> buffer (2, kBlock);
-    juce::MidiBuffer midi;
-    long blocks = 0;
-    const auto start = juce::Time::getMillisecondCounterHiRes();
-    while (juce::Time::getMillisecondCounterHiRes() - start < seconds * 1000.0)
-    {
-        // Real-time pacing like a DAW (one block per 10.7 ms), but by yielding instead of
-        // sleeping: macOS App Nap stretches the sleeps of a windowless background process,
-        // and a writer that never pauses keeps the reader colliding with its writes.
-        src.fill (buffer);
-        vocal->processBlock (buffer, midi);
-        ++blocks;
-        const double due = start + (double) blocks * kBlock * 1000.0 / kRate;
-        while (juce::Time::getMillisecondCounterHiRes() < due)
-            std::this_thread::yield();
-        if (blocks % 32 == 0)
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
-    }
+    ReferenceCallback callback (*vocal, seconds);
+    const auto periodMs = (double) kBlock * 1000.0 / kRate;
+    if (! callback.startRealtimeThread (juce::Thread::RealtimeOptions().withPeriodMs (periodMs)))
+        callback.startThread (juce::Thread::Priority::highest);
+
+    // The message thread keeps plug-in timers (heartbeat) running meanwhile.
+    while (callback.isThreadRunning())
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
     return 0;
 }
 } // namespace
