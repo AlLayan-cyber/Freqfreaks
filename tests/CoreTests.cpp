@@ -212,6 +212,16 @@ void testSmoother()
     for (int i = 0; i < 10; ++i)
         sm.process (target);
     CHECK (sm.value()[0] > 5.9f);   // Duck reaches the target in ~100 ms
+
+    // Manual times override Speed; <= 0 goes back to auto.
+    sm.setManualTimes (250.0f, 2000.0f);
+    CHECK_NEAR (sm.attackMs(), 250.0, 1e-3);
+    CHECK_NEAR (sm.releaseMs(), 2000.0, 1e-3);
+    sm.setManualTimes (0.0f, 400.0f);
+    CHECK (sm.attackMs() < 10.0f);                      // auto attack at Speed = Duck
+    CHECK_NEAR (sm.releaseMs(), 400.0, 1e-3);
+    sm.setManualTimes (0.0f, 0.0f);
+    CHECK (sm.releaseMs() < 100.0f);                    // auto release at Speed = Duck
 }
 
 void testBellFit()

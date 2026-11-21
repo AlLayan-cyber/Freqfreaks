@@ -95,6 +95,11 @@ int main (int argc, char** argv)
     if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::amount))
         p->setValueNotifyingHost (p->convertTo0to1 (85.0f));
     guitarL.processor->setUiLevel (2);
+    // Attack set by hand (neon ring), Release left on auto (grey, follows Speed).
+    if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::attack))
+        p->setValueNotifyingHost (p->convertTo0to1 (25.0f));
+    if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::attackManual))
+        p->setValueNotifyingHost (1.0f);
 
     ff::HubProcessor hub;
     hub.setPlayConfigDetails (2, 2, kRate, kBlock);

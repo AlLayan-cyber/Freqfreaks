@@ -32,6 +32,10 @@ namespace trackParams
     inline constexpr const char* output      = "output";
     inline constexpr const char* autoGain    = "autoGain";
     inline constexpr const char* spaceComp   = "spaceComp";
+    inline constexpr const char* attack      = "attack";
+    inline constexpr const char* release     = "release";
+    inline constexpr const char* attackManual  = "attackManual";
+    inline constexpr const char* releaseManual = "releaseManual";
 }
 
 /** FreqFreaks Track: sits on each track, yields room to its reference track.
@@ -99,6 +103,10 @@ public:
     bool isHubBypassing() const noexcept                   { return hubBypass.load(); }
     float hubTrimValue() const noexcept                    { return hubTrim.load(); }
 
+    /** Attack / release in use right now (manual, or from Speed when auto), ms. */
+    float currentAttackMs() const noexcept                 { return attackInUse.load(); }
+    float currentReleaseMs() const noexcept                { return releaseInUse.load(); }
+
     /** Exact cut curve of this track's filters, for the editor (message thread). */
     const BellBank& bellBank() const noexcept              { return displayBank; }
 
@@ -120,6 +128,7 @@ private:
     std::atomic<int> level { 1 };
     std::atomic<bool> hubBypass { false };
     std::atomic<float> hubTrim { 1.0f };
+    std::atomic<float> attackInUse { 60.0f }, releaseInUse { 600.0f };
     std::uint32_t lastRemoteSerial = 0;   // message thread
     bus::HubData hubScratch;              // audio thread (too big for the stack)
 
@@ -152,6 +161,10 @@ private:
         std::atomic<float>* output = nullptr;
         std::atomic<float>* autoGain = nullptr;
         std::atomic<float>* spaceComp = nullptr;
+        std::atomic<float>* attack = nullptr;
+        std::atomic<float>* release = nullptr;
+        std::atomic<float>* attackManual = nullptr;
+        std::atomic<float>* releaseManual = nullptr;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TrackProcessor)

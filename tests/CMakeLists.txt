@@ -32,6 +32,7 @@ if (FREQFREAKS_BUILD_PLUGINS)
         Snapshot.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/TrackProcessor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/TrackEditor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/track/TimingKnob.cpp
         ${PROJECT_SOURCE_DIR}/plugins/hub/HubProcessor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/hub/HubEditor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/common/BandViews.cpp

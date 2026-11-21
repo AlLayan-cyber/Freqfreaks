@@ -28,7 +28,7 @@ namespace
 }
 
 TrackEditor::TrackEditor (TrackProcessor& p)
-    : AudioProcessorEditor (p), processor (p)
+    : AudioProcessorEditor (p), processor (p), timing (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = processor.state();
@@ -69,6 +69,7 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     levelExpert.onClick = [this] { applyLevel (2); };
 
     addAndMakeVisible (spectrum);
+    addAndMakeVisible (timing);   // over the spectrum
     addAndMakeVisible (budget);
 
     for (auto* k : { &amountKnob, &spaceKnob })
@@ -217,6 +218,7 @@ void TrackEditor::applyLevel (int level)
     levelExpert.setToggleState (level == 2, juce::dontSendNotification);
 
     spectrum.setVisible (level >= 1);
+    timing.setVisible (level >= 1);
     for (auto* row : { &eqDepth, &rangeLow, &rangeHigh, &bassMono, &monoSafety, &sensitivity })
     {
         row->label.setVisible (level == 2);
@@ -300,6 +302,7 @@ void TrackEditor::timerCallback()
                       haveRef ? juce::String::fromUTF8 (ref.name) : juce::String(), bassHz, &processor.bellBank());
     budget.setData (own);
     shownCompensationDb = own.compensationDb;
+    timing.repaint();
 
     trackLabel.setText (processor.trackName(), juce::dontSendNotification);
     syncChoiceButtons();
@@ -344,6 +347,9 @@ void TrackEditor::resized()
         spectrumCard = r.removeFromTop (juce::jmin (300, r.getHeight() / 2 + 60));
         r.removeFromTop (16);
         spectrum.setBounds (spectrumCard.reduced (16, 14).withTrimmedTop (26));
+        // Attack / Release sits in the top-left of the graph, under the Bass Mono label,
+        // where the wave and the spectrum are usually quiet.
+        timing.setBounds (spectrum.getX() + 10, spectrum.getY() + 26, 96, 96);
     }
     else
     {

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "TrackProcessor.h"
+#include "TimingKnob.h"
 #include "../common/BandViews.h"
 #include "../common/LookAndFeel.h"
 
@@ -52,6 +53,7 @@ private:
     juce::TextButton levelSimple { "Simple" }, levelDetail { "Detail" }, levelExpert { "Expert" };
 
     SpectrumView spectrum;
+    TimingKnob timing;
     BudgetView budget;
 
     juce::Slider amountKnob, spaceKnob, speedSlider;

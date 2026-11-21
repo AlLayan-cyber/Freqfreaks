@@ -52,6 +52,7 @@ target_sources (FreqFreaksTrack PRIVATE
     track/TrackEntry.cpp
     track/TrackProcessor.cpp
     track/TrackEditor.cpp
+    track/TimingKnob.cpp
     ${FREQFREAKS_COMMON_SOURCES})
 freqfreaks_configure (FreqFreaksTrack)
 

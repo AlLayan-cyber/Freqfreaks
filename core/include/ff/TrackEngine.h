@@ -19,6 +19,8 @@ struct TrackParams
     float spaceAmount   = 1.0f;     ///< 0..2 (the knob's 0..200 %)
     bool  link          = true;
     float speed         = 0.3f;     ///< 0 = Rider, 1 = Duck
+    float attackMs      = 0.0f;     ///< manual attack; <= 0 = auto (from Speed)
+    float releaseMs     = 0.0f;     ///< manual release; <= 0 = auto (from Speed)
     float eqDepthDb     = 6.0f;
     float monoSafetyDb  = 6.0f;
     float bassMonoHz    = 150.0f;
@@ -69,6 +71,10 @@ public:
     const BellArray& spaceBells() const noexcept        { return spaceGains; }
     const StereoProcessor& processor() const noexcept   { return stereo; }
     bool hasReference() const noexcept                  { return referenceActive; }
+
+    /** The attack and release times in use right now (manual or from Speed), ms. */
+    float attackMs() const noexcept                     { return smoother.attackMs(); }
+    float releaseMs() const noexcept                    { return smoother.releaseMs(); }
 
     /** Automatic part of the output gain right now (Space compensation or Auto), dB. */
     float compensationDb() const noexcept               { return compTargetDb; }

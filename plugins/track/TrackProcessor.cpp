@@ -45,6 +45,10 @@ TrackProcessor::TrackProcessor()
     raw.output      = parameters.getRawParameterValue (output);
     raw.autoGain    = parameters.getRawParameterValue (autoGain);
     raw.spaceComp   = parameters.getRawParameterValue (spaceComp);
+    raw.attack      = parameters.getRawParameterValue (attack);
+    raw.release     = parameters.getRawParameterValue (release);
+    raw.attackManual  = parameters.getRawParameterValue (attackManual);
+    raw.releaseManual = parameters.getRawParameterValue (releaseManual);
     displayBank.prepare (48000.0);
 
     claimSlot (SharedBus::makeInstanceId());
@@ -104,6 +108,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackProcessor::createLayout
                                                            .withStringFromValueFunction ([] (float v, int) { return (v > 0.05f ? "+" : "") + String (v, 1) + " dB"; })));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { autoGain, 1 }, "Auto Gain", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { spaceComp, 1 }, "Space Compensation", true));
+    auto millis = [] (const String& id, const String& label, float lo, float hi, float def)
+    {
+        return std::make_unique<AudioParameterFloat> (ParameterID { id, 1 }, label, logRange (lo, hi), def,
+                                                      AudioParameterFloatAttributes().withLabel ("ms")
+                                                          .withStringFromValueFunction ([] (float v, int)
+                                                          { return v >= 1000.0f ? String (v / 1000.0f, 2) + " s" : String (v, v < 10.0f ? 1 : 0) + " ms"; }));
+    };
+    layout.add (millis (attack, "Attack", 1.0f, 500.0f, 30.0f));
+    layout.add (millis (release, "Release", 20.0f, 3000.0f, 400.0f));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { attackManual, 1 }, "Attack Manual", false));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { releaseManual, 1 }, "Release Manual", false));
     return layout;
 }
 
@@ -152,6 +167,8 @@ TrackParams TrackProcessor::readParams() const noexcept
     p.outputDb      = raw.output->load();
     p.autoGain      = raw.autoGain->load() > 0.5f;
     p.spaceComp     = raw.spaceComp->load() > 0.5f;
+    p.attackMs      = raw.attackManual->load() > 0.5f ? raw.attack->load() : 0.0f;
+    p.releaseMs     = raw.releaseManual->load() > 0.5f ? raw.release->load() : 0.0f;
 
     const int side = (int) raw.panSide->load();
     p.panSign = side == 1 ? 1.0f : side == 2 ? -1.0f : ((instanceId() & 1u) ? 1.0f : -1.0f);
@@ -251,6 +268,9 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
                 l[i] = 0.5f * (l[i] + copy[i]);
         }
     }
+
+    attackInUse = engine.attackMs();
+    releaseInUse = engine.releaseMs();
 
     // Publish analysis and budget for the reference users and the Hub.
     auto& d = publishData;

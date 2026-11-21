@@ -68,6 +68,9 @@ public:
     /** 0 = "Rider" (slow, phrase-level), 1 = "Duck" (fast). */
     void setSpeed (float newSpeed) noexcept;
 
+    /** Manual times override the Speed-derived ones; a value <= 0 means "auto" (follow Speed). */
+    void setManualTimes (float attackMs, float releaseMs) noexcept;
+
     const BandArray& process (const BandArray& target) noexcept;
     const BandArray& value() const noexcept      { return state; }
 
@@ -75,8 +78,11 @@ public:
     float releaseMs() const noexcept  { return release; }
 
 private:
+    void updateCoefficients() noexcept;
+
     double frameRate = 93.75;
     float speed = 0.3f, attack = 60.0f, release = 600.0f;
+    float manualAttack = 0.0f, manualRelease = 0.0f;
     float attackCoeff = 0.0f, releaseCoeff = 0.0f;
     BandArray state {};
 };

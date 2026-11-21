@@ -83,11 +83,24 @@ Budget splitBudget (const BandArray& needDb, const BudgetSettings& s) noexcept
 void BandSmoother::setSpeed (float newSpeed) noexcept
 {
     speed = std::clamp (newSpeed, 0.0f, 1.0f);
+    updateCoefficients();
+}
 
+void BandSmoother::setManualTimes (float attackMs, float releaseMs) noexcept
+{
+    if (std::abs (attackMs - manualAttack) < 1.0e-4f && std::abs (releaseMs - manualRelease) < 1.0e-4f)
+        return;
+    manualAttack = attackMs;
+    manualRelease = releaseMs;
+    updateCoefficients();
+}
+
+void BandSmoother::updateCoefficients() noexcept
+{
     // Log-interpolate between Rider (slow) and Duck (fast) time constants.
     auto lerpLog = [this] (float slow, float fast) { return slow * std::pow (fast / slow, speed); };
-    attack  = lerpLog (180.0f, 8.0f);
-    release = lerpLog (1500.0f, 90.0f);
+    attack  = manualAttack > 0.0f ? std::clamp (manualAttack, 1.0f, 2000.0f) : lerpLog (180.0f, 8.0f);
+    release = manualRelease > 0.0f ? std::clamp (manualRelease, 5.0f, 10000.0f) : lerpLog (1500.0f, 90.0f);
 
     auto coeff = [this] (float ms) { return (float) std::exp (-1000.0 / (ms * frameRate)); };
     attackCoeff  = coeff (attack);

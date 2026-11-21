@@ -288,7 +288,7 @@ void SpectrumView::paintWave (juce::Graphics& g, juce::Rectangle<float> plot)
         g.drawHorizontalLine ((int) y, plot.getRight() - 6.0f, plot.getRight());
         g.setColour (theme::textDim);
         g.drawText (db == 0 ? juce::String ("0") : juce::String::fromUTF8 ("\u2212") + juce::String (db),
-                    juce::Rectangle<float> (plot.getRight() + 4.0f, y - 7.0f, 30.0f, 14.0f), juce::Justification::centredLeft);
+                    juce::Rectangle<float> (plot.getRight() + 4.0f, db == 0 ? y : y - 7.0f, 30.0f, 14.0f), juce::Justification::centredLeft);
     }
 
     // Hover readout.

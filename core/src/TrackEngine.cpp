@@ -56,6 +56,7 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
         need = computeNeed (analyzer.midDb(), analyzer.sideDb(), reference.midDb, ms);
 
     smoother.setSpeed (p.speed);
+    smoother.setManualTimes (p.attackMs, p.releaseMs);
     const auto& smoothed = smoother.process (need);
 
     // Knob and Hub moves are smoothed here, before the budget: a jump of Amount or Space Amount
