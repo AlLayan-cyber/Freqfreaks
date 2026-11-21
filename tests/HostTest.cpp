@@ -404,7 +404,9 @@ int main (int argc, char** argv)
         juce::ChildProcess child;
         const auto idFile = juce::File::createTempFile ("ffid");
         const auto self = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getFullPathName();
-        juce::StringArray cmd { self, "--serve-reference", trackPath, "10", idFile.getFullPathName() };
+        // The child serves until it is killed below (60 s at most): on a loaded CI machine this
+        // process's own loop can take far longer than its nominal 5 s.
+        juce::StringArray cmd { self, "--serve-reference", trackPath, "60", idFile.getFullPathName() };
         check (child.start (cmd, 0), "start reference in a child process");
 
         juce::String remoteId;
