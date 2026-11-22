@@ -285,15 +285,23 @@ int main (int argc, char** argv)
     const auto guitarId = stateOf (*guitar).getProperty ("instanceId").toString();
     check (vocalId.isNotEmpty() && vocalId != guitarId, "every instance gets its own id");
 
-    // The DAW's track name and colour reach the plug-in (VST3 IInfoListener), Cyrillic included.
+    // The DAW's track name and colour reach the plug-in (VST3 IInfoListener).
+    // Cyrillic is checked on Linux only: JUCE acting as the *host* (this test) converts the
+    // name with the system code page on Windows and macOS before it reaches the plug-in.
+    // A real DAW sends VST3's UTF-16 directly, which the plug-in decodes on every system.
     {
+       #if JUCE_LINUX
+        const auto sentName = juce::String::fromUTF8 ("Вокал главный");
+       #else
+        const juce::String sentName ("Lead Vocal 2");
+       #endif
         juce::AudioProcessor::TrackProperties props;
-        props.name = juce::String::fromUTF8 ("Вокал главный");
+        props.name = sentName;
         props.colour = juce::Colour (0xffe879f9);
         vocal->updateTrackProperties (props);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
         const auto st = stateOf (*vocal);
-        check (st.getProperty ("trackName").toString() == juce::String::fromUTF8 ("Вокал главный"),
+        check (st.getProperty ("trackName").toString() == sentName,
                "the DAW's track name arrives (got \"" + st.getProperty ("trackName").toString() + "\")");
         check ((juce::uint32) st.getProperty ("hostColour").toString().getHexValue64() == 0xffe879f9u,
                "the DAW's track colour arrives");
