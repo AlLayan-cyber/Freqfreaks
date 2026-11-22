@@ -865,7 +865,7 @@ void TrackEditor::paint (juce::Graphics& g)
         g.drawText (u8 ("Lookahead: 30 мс (задержка сообщается DAW)"), info.removeFromTop (20), juce::Justification::centredLeft);
         // What the DAW told us about the track: shows at once whether the host sends a name.
         const auto host = processor.hostInfo();
-        if (host.calls == 0 && host.name.isEmpty())
+        if (host.calls == 0 && host.name.isEmpty() && ! host.presonus)
         {
             g.setColour (theme::eq);
             g.drawText (u8 ("DAW не передаёт имя трека"), info.removeFromTop (20), juce::Justification::centredLeft);
@@ -874,7 +874,7 @@ void TrackEditor::paint (juce::Graphics& g)
         }
         else
         {
-            g.drawText (u8 ("Имя от DAW: ") + (host.name.isNotEmpty() ? u8 ("«") + host.name + u8 ("»") : u8 ("не прислано")),
+            g.drawText ((host.presonus ? u8 ("Имя от Studio One: ") : u8 ("Имя от DAW: ")) + (host.name.isNotEmpty() ? u8 ("«") + host.name + u8 ("»") : u8 ("не прислано")),
                         info.removeFromTop (20), juce::Justification::centredLeft);
             auto line = info.removeFromTop (20);
             g.drawText (u8 ("Цвет от DAW: ") + (host.colourArgb != 0 ? juce::String() : u8 ("не прислан")),

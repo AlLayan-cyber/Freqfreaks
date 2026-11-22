@@ -7,6 +7,7 @@
 
 #include "ff/SharedBus.h"
 #include "ff/TrackEngine.h"
+#include "HostTrackInfo.h"
 
 #include <atomic>
 #include <vector>
@@ -83,6 +84,7 @@ public:
     void setStateInformation (const void*, int) override;
 
     void updateTrackProperties (const TrackProperties&) override;
+    juce::VST3ClientExtensions* getVST3ClientExtensions() override  { return &presonusInfo; }
 
     //==============================================================================
     juce::AudioProcessorValueTreeState& state() noexcept   { return parameters; }
@@ -111,6 +113,7 @@ public:
     struct HostInfo
     {
         int calls = 0;                 // how many times the DAW sent track properties
+        bool presonus = false;         // the DAW answers PreSonus's track-info extension (Studio One)
         juce::String name;             // empty = never sent
         juce::uint32 colourArgb = 0;   // 0 = never sent
     };
@@ -173,6 +176,8 @@ private:
     juce::String hostName, typedName, refName;
     juce::uint32 hostColour = 0, typedColour = 0, colourForBus = 0;
     int hostCalls = 0;
+    HostTrackInfo presonusInfo;   // Studio One's own way to tell the track name
+    void pollHostTrackInfo();
     char nameForBus[bus::kNameLength] {};
 
     bus::TrackData publishData;

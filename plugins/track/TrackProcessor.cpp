@@ -398,6 +398,7 @@ void TrackProcessor::timerCallback()
 {
     // Keeps us visible while the host is not running the audio callback.
     bus.heartbeat();
+    pollHostTrackInfo();
     if (! bus.ownsSlot())
     {
         // The slot was taken over while we stalled: come back under the same id.
@@ -502,7 +503,7 @@ bool TrackProcessor::hasManualColour() const
 TrackProcessor::HostInfo TrackProcessor::hostInfo() const
 {
     const juce::SpinLock::ScopedLockType lock (identityLock);
-    return { hostCalls, hostName, hostColour };
+    return { hostCalls, presonusInfo.isAvailable(), hostName, hostColour };
 }
 
 void TrackProcessor::updateTrackProperties (const TrackProperties& properties)
@@ -517,6 +518,34 @@ void TrackProcessor::updateTrackProperties (const TrackProperties& properties)
             hostColour = properties.colour->withAlpha (1.0f).getARGB();
     }
     refreshBusName();
+}
+
+void TrackProcessor::pollHostTrackInfo()
+{
+    // Studio One: ask for the track name and colour (it answers at once, and after a rename).
+    juce::String newName;
+    juce::uint32 newColour = 0;
+    if (! presonusInfo.read (newName, newColour))
+        return;
+
+    bool changed = false;
+    {
+        const juce::SpinLock::ScopedLockType lock (identityLock);
+        if (newName.trim().isNotEmpty() && newName.trim() != hostName)
+        {
+            hostName = newName.trim();
+            changed = true;
+        }
+        if (newColour != 0 && newColour != hostColour)
+        {
+            hostColour = newColour;
+            changed = true;
+        }
+        if (changed)
+            ++hostCalls;
+    }
+    if (changed)
+        refreshBusName();
 }
 
 void TrackProcessor::refreshBusName()
