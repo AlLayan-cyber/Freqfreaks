@@ -34,6 +34,7 @@ void HostTrackInfo::setIComponentHandler (Steinberg::FUnknown* handler)
     }
     if (handler == nullptr)
         return;
+    handlerSeen = true;
 
     void* obj = nullptr;
     if (handler->queryInterface (Presonus::IContextInfoProvider::iid, &obj) == Steinberg::kResultOk && obj != nullptr)

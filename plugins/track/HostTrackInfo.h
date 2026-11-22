@@ -25,11 +25,15 @@ public:
     /** True if the host offers the extension at all. */
     bool isAvailable() const noexcept           { return provider != nullptr; }
 
+    /** True once the DAW handed over its component handler (diagnostics). */
+    bool hasHandler() const noexcept            { return handlerSeen; }
+
     /** Reads the current name and colour (0 = not given). False if the host gave neither. */
     bool read (juce::String& name, juce::uint32& argb) const;
 
 private:
     void* provider = nullptr;   // Presonus::IContextInfoProvider*, one reference held
+    bool handlerSeen = false;
 
     JUCE_DECLARE_NON_COPYABLE (HostTrackInfo)
 };

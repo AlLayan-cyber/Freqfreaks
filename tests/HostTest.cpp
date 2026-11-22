@@ -285,6 +285,11 @@ int main (int argc, char** argv)
     const auto guitarId = stateOf (*guitar).getProperty ("instanceId").toString();
     check (vocalId.isNotEmpty() && vocalId != guitarId, "every instance gets its own id");
 
+    // The host's component handler reaches the plug-in (JUCE passes it on only at install;
+    // the patch passes it on whenever the host sets it). Studio One answers track-name
+    // questions through it.
+    check ((bool) stateOf (*vocal).getProperty ("diagHostHandler", false), "the plug-in gets the host's component handler");
+
     // The DAW's track name and colour reach the plug-in (VST3 IInfoListener).
     // Cyrillic is checked on Linux only: JUCE acting as the *host* (this test) converts the
     // name with the system code page on Windows and macOS before it reaches the plug-in.

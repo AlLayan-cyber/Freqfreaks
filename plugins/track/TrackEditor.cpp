@@ -868,7 +868,8 @@ void TrackEditor::paint (juce::Graphics& g)
         if (host.calls == 0 && host.name.isEmpty() && ! host.presonus)
         {
             g.setColour (theme::eq);
-            g.drawText (u8 ("DAW не передаёт имя трека"), info.removeFromTop (20), juce::Justification::centredLeft);
+            g.drawText (u8 ("DAW не передаёт имя трека (связь: ") + (host.handler ? u8 ("есть") : u8 ("нет")) + ")",
+                        info.removeFromTop (20), juce::Justification::centredLeft);
             g.setColour (theme::textDim);
             g.drawText (u8 ("Кликни по имени вверху, чтобы задать своё"), info.removeFromTop (20), juce::Justification::centredLeft);
         }

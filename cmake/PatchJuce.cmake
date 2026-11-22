@@ -1,9 +1,13 @@
 # Small, idempotent fix to the JUCE 8.0.9 VST3 wrapper, applied at configure time.
 #
-# The host tells a VST3 plug-in its track name and colour (IInfoListener::setChannelContextInfos).
-# Some hosts (Studio One) send it right after creating the plug-in, before JUCE has connected
-# the processor; JUCE then drops it, and the plug-in only learns the name when the track is
-# renamed. The patch keeps what arrived early and hands it over once the processor exists.
+# 1. The host tells a VST3 plug-in its track name and colour (IInfoListener::setChannelContextInfos).
+#    Some hosts send it right after creating the plug-in, before JUCE has connected the
+#    processor; JUCE then drops it. The patch keeps what arrived early and hands it over once
+#    the processor exists.
+# 2. JUCE hands the host's component handler to the plug-in (VST3ClientExtensions) only when
+#    the processor is installed. Studio One sets the handler later, so the plug-in never got
+#    it and could not ask Studio One for the track name (PreSonus IContextInfoProvider). The
+#    patch passes it on every time the host sets it.
 
 function (freqfreaks_patch_juce juceDir)
     set (file "${juceDir}/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp")
@@ -12,16 +16,14 @@ function (freqfreaks_patch_juce juceDir)
         return()
     endif()
     file (READ "${file}" text)
-    if (text MATCHES "freqfreaksPendingTrackProperties")
-        return()   # already patched
-    endif()
+    set (original "${text}")
 
     set (anchorInfo "    tresult PLUGIN_API setChannelContextInfos (Vst::IAttributeList* list) override\n    {\n")
     set (anchorInstall "    void installAudioProcessor (const VSTComSmartPtr<JuceAudioProcessor>& newAudioProcessor)\n    {\n        audioProcessor = newAudioProcessor;\n")
     string (FIND "${text}" "${anchorInfo}" atInfo)
     string (FIND "${text}" "${anchorInstall}" atInstall)
     if (atInfo EQUAL -1 OR atInstall EQUAL -1)
-        message (WARNING "FreqFreaks: JUCE VST3 wrapper changed, early track names are not kept")
+        message (WARNING "FreqFreaks: JUCE VST3 wrapper changed, the track-name patch is not applied")
         return()
     endif()
 
@@ -56,8 +58,29 @@ function (freqfreaks_patch_juce juceDir)
 ]=])
     set (member "    std::optional<AudioProcessor::TrackProperties> freqfreaksPendingTrackProperties;   // FreqFreaks\n\n")
 
-    string (REPLACE "${anchorInfo}" "${anchorInfo}${early}" text "${text}")
-    string (REPLACE "${anchorInstall}" "${member}${anchorInstall}${handOver}" text "${text}")
-    file (WRITE "${file}" "${text}")
-    message (STATUS "FreqFreaks: patched the JUCE VST3 wrapper (keeps early track names)")
+    set (handler [=[
+    tresult PLUGIN_API setComponentHandler (Vst::IComponentHandler* handler) override
+    {
+        // FreqFreaks: the host may set its handler after the processor was installed
+        // (Studio One does); tell the plug-in every time, not only at install.
+        const auto result = Vst::EditController::setComponentHandler (handler);
+        if (audioProcessor != nullptr)
+            if (auto* extensions = audioProcessor->get()->getVST3ClientExtensions())
+                extensions->setIComponentHandler (componentHandler);
+        return result;
+    }
+
+]=])
+
+    if (NOT text MATCHES "freqfreaksPendingTrackProperties")
+        string (REPLACE "${anchorInfo}" "${anchorInfo}${early}" text "${text}")
+        string (REPLACE "${anchorInstall}" "${member}${anchorInstall}${handOver}" text "${text}")
+    endif()
+    if (NOT text MATCHES "FreqFreaks: the host may set its handler")
+        string (REPLACE "${anchorInfo}" "${handler}${anchorInfo}" text "${text}")
+    endif()
+    if (NOT text STREQUAL original)
+        file (WRITE "${file}" "${text}")
+        message (STATUS "FreqFreaks: patched the JUCE VST3 wrapper (track name from the host)")
+    endif()
 endfunction()

@@ -503,7 +503,7 @@ bool TrackProcessor::hasManualColour() const
 TrackProcessor::HostInfo TrackProcessor::hostInfo() const
 {
     const juce::SpinLock::ScopedLockType lock (identityLock);
-    return { hostCalls, presonusInfo.isAvailable(), hostName, hostColour };
+    return { hostCalls, presonusInfo.isAvailable(), presonusInfo.hasHandler(), hostName, hostColour };
 }
 
 void TrackProcessor::updateTrackProperties (const TrackProperties& properties)
@@ -567,6 +567,7 @@ void TrackProcessor::getStateInformation (juce::MemoryBlock& destData)
     tree.setProperty ("referenceName", referenceName(), nullptr);
     tree.setProperty ("uiLevel", level.load(), nullptr);
     tree.setProperty ("uiScale", scale.load(), nullptr);
+    tree.setProperty ("diagHostHandler", presonusInfo.hasHandler(), nullptr);   // diagnostics, not read back
     {
         const juce::SpinLock::ScopedLockType lock (identityLock);
         tree.setProperty ("trackName", hostName, nullptr);   // last name the DAW sent

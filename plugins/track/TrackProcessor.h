@@ -114,6 +114,7 @@ public:
     {
         int calls = 0;                 // how many times the DAW sent track properties
         bool presonus = false;         // the DAW answers PreSonus's track-info extension (Studio One)
+        bool handler = false;          // the DAW handed over its component handler
         juce::String name;             // empty = never sent
         juce::uint32 colourArgb = 0;   // 0 = never sent
     };
