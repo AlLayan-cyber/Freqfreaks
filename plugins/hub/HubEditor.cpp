@@ -68,6 +68,27 @@ void HubCanvas::paint (juce::Graphics& g)
     }
 }
 
+void HubCanvas::setData (std::vector<HubTrack> t)
+{
+    tracks = std::move (t);
+    const auto now = SharedBus::nowMs();
+    for (const auto& tr : tracks)
+    {
+        float given = 0.0f;
+        for (int b = 0; b < kNumBands; ++b)
+            given = juce::jmax (given, tr.data.eqDb[b] + tr.data.spaceDb[b]);
+        auto& g = shownGiven[tr.id];
+        g.pending = juce::jmax (g.pending, given);
+        if (now - g.ms >= 1000)
+        {
+            g.shown = g.pending;
+            g.pending = given;
+            g.ms = now;
+        }
+    }
+    repaint();
+}
+
 void HubCanvas::paintMap (juce::Graphics& g, juce::Rectangle<float> area)
 {
     auto title = area.removeFromTop (24.0f);
@@ -81,14 +102,30 @@ void HubCanvas::paintMap (juce::Graphics& g, juce::Rectangle<float> area)
 
     auto labels = area.removeFromBottom (16.0f);
     const float labelW = 110.0f;
-    const int n = (int) tracks.size();
+
+    // Only the tracks that yield: a pure reference never has anything to show here
+    // (the Matrix still shows everyone).
+    std::vector<int> shown;
+    for (int t = 0; t < (int) tracks.size(); ++t)
+        if (tracks[(size_t) t].data.references[0] != 0)
+            shown.push_back (t);
+    if (shown.empty())
+    {
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (13.0f));
+        g.drawText (theme::u8 ("Нет дорожек, которые уступают. Выбери референс на треке."), area, juce::Justification::centred);
+        return;
+    }
+
+    const int n = (int) shown.size();
     const float rowH = juce::jmin (44.0f, area.getHeight() / (float) n);
     const float cellW = (area.getWidth() - labelW) / (float) kNumBands;
 
-    for (int t = 0; t < n; ++t)
+    for (int row = 0; row < n; ++row)
     {
+        const int t = shown[(size_t) row];
         const auto& tr = tracks[(size_t) t];
-        const float y = area.getY() + rowH * (float) t;
+        const float y = area.getY() + rowH * (float) row;
         g.setColour (tr.colour);
         g.fillEllipse (area.getX(), y + rowH * 0.5f - 4.0f, 8.0f, 8.0f);
         g.setColour (theme::text);
@@ -115,6 +152,24 @@ void HubCanvas::paintMap (juce::Graphics& g, juce::Rectangle<float> area)
                 g.drawRoundedRectangle (cell.reduced (0.5f), 3.0f, 2.0f);
             }
         }
+
+        // At the start of the row: how much the track gives now; at the end: to whom.
+        const auto rowArea = juce::Rectangle<float> (area.getX() + labelW, y, area.getWidth() - labelW, rowH).reduced (6.0f, 0.0f);
+        auto pill = [&] (const juce::String& text, bool atStart, juce::Colour colour) {
+            const auto font = theme::font (11.0f, true);
+            const float w = juce::jmin (rowArea.getWidth() * 0.4f, juce::GlyphArrangement::getStringWidth (font, text) + 12.0f);
+            auto box = juce::Rectangle<float> (w, 18.0f).withCentre ({ atStart ? rowArea.getX() + w * 0.5f : rowArea.getRight() - w * 0.5f,
+                                                                       y + rowH * 0.5f });
+            g.setColour (theme::background.withAlpha (0.72f));
+            g.fillRoundedRectangle (box, 5.0f);
+            g.setColour (colour);
+            g.setFont (font);
+            g.drawText (text, box.reduced (6.0f, 0.0f), juce::Justification::centred, true);
+        };
+        const float given = shownGiven.count (tr.id) != 0 ? shownGiven.at (tr.id).shown : 0.0f;
+        pill (bypassed ? theme::u8 ("обход") : (given > 0.05f ? theme::u8 ("\xe2\x88\x92") + juce::String (given, 1) + theme::u8 (" дБ") : theme::u8 ("0 дБ")),
+              true, bypassed ? theme::textDim : theme::text);
+        pill (theme::u8 ("от ") + (tr.referenceName.isNotEmpty() ? tr.referenceName : theme::u8 ("?")), false, theme::textDim);
     }
 
     const auto& layout = BandLayout::get();
@@ -892,7 +947,9 @@ std::vector<HubIssue> HubEditor::diagnose (const std::vector<HubTrack>& list) co
 
 std::vector<HubIssue> HubEditor::holdIssues (std::vector<HubIssue> current)
 {
-    constexpr std::uint64_t holdMs = 10000, textEveryMs = 1000;
+    // A problem shows while it lasts. It goes as soon as the level has been fine for 1.5 s in a
+    // row (shorter dips don't make it flicker), but stays at least 3 s so it can be read.
+    constexpr std::uint64_t holdMs = 10000, textEveryMs = 1000, goneAfterMs = 1500, minShownMs = 3000;
     const auto now = SharedBus::nowMs();
 
     for (auto& is : current)
@@ -906,8 +963,6 @@ std::vector<HubIssue> HubEditor::holdIssues (std::vector<HubIssue> current)
         auto& h = it->second;
         const bool comingBack = now - h.lastSeenMs > 500;
         h.lastSeenMs = now;
-        if (comingBack)
-            h.firstSeenMs = juce::jmin (h.firstSeenMs, now);
         // Refresh the text at most once a second, keeping the worst value seen and the severity.
         const bool worse = is.worstDb > h.issue.worstDb + 1.0f || (is.severe && ! h.issue.severe);
         if (worse || now - h.textMs >= textEveryMs || comingBack)
@@ -931,13 +986,14 @@ std::vector<HubIssue> HubEditor::holdIssues (std::vector<HubIssue> current)
     {
         auto& h = it->second;
         const bool trackAlive = std::any_of (tracks.begin(), tracks.end(), [&] (const HubTrack& t) { return t.id == h.issue.trackId; });
-        if (now - h.lastSeenMs > holdMs || ! trackAlive)
+        const bool resolved = now - h.lastSeenMs > goneAfterMs && now - h.firstSeenMs >= minShownMs;
+        if (resolved || ! trackAlive)
         {
             it = held.erase (it);
             continue;
         }
         auto is = h.issue;
-        is.ageSeconds = now - h.lastSeenMs > 500 ? (int) ((now - h.lastSeenMs + 500) / 1000) : 0;
+        is.ageSeconds = 0;
         is.trackIndex = -1;
         for (size_t i = 0; i < tracks.size(); ++i)
             if (tracks[i].id == is.trackId)
@@ -1017,9 +1073,11 @@ void HubEditor::rebuildRows()
                 if (tracks[i].id == is.trackId)
                     problem[i] = true;
 
-    std::vector<size_t> order (tracks.size());
-    for (size_t i = 0; i < order.size(); ++i)
-        order[i] = i;
+    // Only the tracks that yield: a pure reference has nothing to trim or bypass here.
+    std::vector<size_t> order;
+    for (size_t i = 0; i < tracks.size(); ++i)
+        if (tracks[i].data.references[0] != 0)
+            order.push_back (i);
     std::stable_sort (order.begin(), order.end(), [&] (size_t a, size_t b) { return problem[a] && ! problem[b]; });
 
     // Don't shuffle the list under the mouse: while a trim is dragged, only update values.
@@ -1033,7 +1091,7 @@ void HubEditor::rebuildRows()
     }
 
     std::vector<std::unique_ptr<TrackRow>> next;
-    bool changed = rows.size() != tracks.size();
+    bool changed = rows.size() != order.size();
     for (size_t k = 0; k < order.size(); ++k)
     {
         const auto& t = tracks[order[k]];
@@ -1181,7 +1239,9 @@ void HubEditor::paint (juce::Graphics& g)
     g.setColour (theme::textDim);
     g.setFont (theme::font (12.0f));
     auto footer = sidebar.reduced (14, 16).withTrimmedBottom (36).removeFromBottom (20);
-    g.drawText (u8 ("Треков: ") + juce::String ((int) tracks.size()) + u8 (" · неразрешённых полос: ") + juce::String (unresolved),
+    const int references = (int) std::count_if (tracks.begin(), tracks.end(), [] (const HubTrack& t) { return t.data.references[0] == 0; });
+    juce::ignoreUnused (unresolved);
+    g.drawText (u8 ("Уступают: ") + juce::String ((int) tracks.size() - references) + u8 (" · референсов: ") + juce::String (references),
                 footer, juce::Justification::centredLeft);
 }
 

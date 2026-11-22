@@ -42,7 +42,7 @@ public:
     enum class View { map, matrix, stereo };
 
     void setView (View v)                                { view = v; repaint(); }
-    void setData (std::vector<HubTrack> t)               { tracks = std::move (t); repaint(); }
+    void setData (std::vector<HubTrack> t);
     void setFocus (int track, int from, int to)          { focusTrack = track; focusFrom = from; focusTo = to; repaint(); }
 
     void paint (juce::Graphics&) override;
@@ -54,6 +54,10 @@ private:
 
     View view = View::map;
     std::vector<HubTrack> tracks;
+
+    // The "−5 дБ" on each row changes at most once a second (the most it gave in that second).
+    struct Given { float shown = 0.0f, pending = 0.0f; std::uint64_t ms = 0; };
+    std::map<std::uint64_t, Given> shownGiven;
     int focusTrack = -1, focusFrom = 0, focusTo = -1;
 };
 
