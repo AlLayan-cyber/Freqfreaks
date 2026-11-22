@@ -8,15 +8,18 @@
 namespace ff
 {
 
-/** A small EQ-style window for the frequency settings in Expert: Range low / high (amber
-    edges, outside is dimmed: nothing is touched there) and Bass Mono (teal edge, left of it
-    the grey zone where only EQ works). The fixed bells are dots on the axis, lit when they
+/** A small EQ-style window for the frequency settings in Expert.
+
+    EQ kind: Range low / high (amber edges; outside is dimmed, nothing is touched there).
+    Space kind: Bass Mono (teal edge; left of it Space does not work, the low end stays mono),
+    with Range shown for context. The fixed bells are dots on the axis, lit where that module
     may work. Drag an edge, mouse wheel for fine steps, double-click for the default. */
 class RangeView : public juce::Component,
                   public juce::SettableTooltipClient
 {
 public:
-    explicit RangeView (TrackProcessor&);
+    enum class Kind { eq, space };
+    RangeView (TrackProcessor&, Kind);
 
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -39,6 +42,7 @@ private:
     juce::RangedAudioParameter* param (Edge) const;
 
     TrackProcessor& processor;
+    Kind kind;
     Edge hover = none, dragging = none;
 };
 

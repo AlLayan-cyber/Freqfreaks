@@ -114,7 +114,9 @@ private:
     float shownCompensationDb = 0.0f;
 
     ParamRow eqDepth, rangeLow, rangeHigh, bassMono, monoSafety, sensitivity;
-    RangeView rangeView { processor };   // Range and Bass Mono as a small EQ window (Expert)
+    RangeView rangeView { processor, RangeView::Kind::eq };      // Range as a small EQ window (Expert)
+    RangeView bassView { processor, RangeView::Kind::space };    // Bass Mono, in the Space card
+    bool spaceOff = false;                                        // Space Amount at 0: the Space card is pale
 
     // Layout rectangles used by paint().
     juce::Rectangle<int> header, footer, spectrumCard, budgetCard, knobCard, drawer, amountArea, spaceArea;

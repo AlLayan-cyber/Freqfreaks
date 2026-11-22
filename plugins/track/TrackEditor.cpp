@@ -277,6 +277,7 @@ TrackEditor::TrackEditor (TrackProcessor& p)
                                          "(Q 4…16, как у Soothe/Pro-Q). Точнее, но может звучать резче. Двойной клик — 0%."));
     addAndMakeVisible (sharpKnob);
     addChildComponent (rangeView);
+    addChildComponent (bassView);
     sharpAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::sharp, sharpKnob);
 
     addAndMakeVisible (spectrum);
@@ -448,6 +449,7 @@ void TrackEditor::applyLevel (int level)
     timing.setVisible (level >= 1);
     sharpKnob.setVisible (level >= 1);
     rangeView.setVisible (level == 2);
+    bassView.setVisible (level == 2);
     for (auto* row : { &rangeLow, &rangeHigh, &bassMono })   // replaced by the mini-EQ
     {
         row->label.setVisible (false);
@@ -551,6 +553,18 @@ void TrackEditor::timerCallback()
     listenButton.repaint();
     syncChoiceButtons();
     updateHelp();
+
+    // Space Amount at 0 %: nothing stereo happens, so the Space card goes pale.
+    const bool off = processor.state().getRawParameterValue (trackParams::space)->load() < 0.05f;
+    if (off != spaceOff)
+    {
+        spaceOff = off;
+        const float alpha = spaceOff ? 0.35f : 1.0f;
+        bassView.setAlpha (alpha);
+        monoSafety.label.setAlpha (alpha);
+        monoSafety.slider.setAlpha (alpha);
+        repaint (spaceCard);
+    }
     repaint (header);
     repaint (spectrumCard.withHeight (40));
     repaint (budgetCard.withHeight (34));
@@ -656,19 +670,18 @@ void TrackEditor::resized()
                 row->slider.setBounds (line);
             }
         };
-        // Frequencies: one card over the EQ and Space columns, the mini-EQ on top, the two
-        // depth sliders under it.
-        freqCard = eqCard.getUnion (spaceCard);
-        auto inner = freqCard.reduced (14, 10).withTrimmedTop (24);
-        rangeView.setBounds (inner.removeFromTop (74));
-        inner.removeFromTop (8);
-        auto line = inner.removeFromTop (28);
-        auto left = line.removeFromLeft (line.getWidth() / 2 - 8);
-        line.removeFromLeft (16);
-        eqDepth.label.setBounds (left.removeFromLeft (96));
-        eqDepth.slider.setBounds (left);
-        monoSafety.label.setBounds (line.removeFromLeft (96));
-        monoSafety.slider.setBounds (line);
+        // EQ card: Range in a small EQ window, Depth under it. Space card: Bass Mono in its
+        // own window, Mono Safety under it.
+        auto card = [] (juce::Rectangle<int> c, RangeView& view, ParamRow& row) {
+            auto inner = c.reduced (14, 10).withTrimmedTop (24);
+            view.setBounds (inner.removeFromTop (74));
+            inner.removeFromTop (8);
+            auto line = inner.removeFromTop (28);
+            row.label.setBounds (line.removeFromLeft (96));
+            row.slider.setBounds (line);
+        };
+        card (eqCard, rangeView, eqDepth);
+        card (spaceCard, bassView, monoSafety);
         place (detectCard, { &sensitivity });
     }
 }
@@ -878,7 +891,9 @@ void TrackEditor::paint (juce::Graphics& g)
             g.setFont (theme::font (13.0f, true));
             g.drawText (text, card.reduced (14, 10).removeFromTop (20), juce::Justification::centredLeft);
         };
-        title (freqCard, theme::eq, u8 ("Частоты · EQ и Space"));
+        title (eqCard, theme::eq, u8 ("EQ · частоты"));
+        title (spaceCard, spaceOff ? theme::textDim : theme::space,
+               spaceOff ? u8 ("Space · стерео — выключен (Space Amount 0%)") : u8 ("Space · стерео"));
         title (detectCard, theme::textDim, u8 ("Обнаружение"));
         g.setColour (theme::textDim);
         g.setFont (theme::font (12.0f));

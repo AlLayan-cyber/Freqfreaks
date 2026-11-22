@@ -19,11 +19,13 @@ namespace
     }
 }
 
-RangeView::RangeView (TrackProcessor& p) : processor (p)
+RangeView::RangeView (TrackProcessor& p, Kind k) : processor (p), kind (k)
 {
-    setTooltip (theme::u8 ("Частоты\nЯнтарные края — Range: вне них плагин ничего не трогает. Бирюзовый край — Bass Mono: "
-                           "левее Space не работает, низ остаётся в моно. Точки — полосы плагина. Тяни край, колесо — "
-                           "точно, двойной клик — по умолчанию."));
+    setTooltip (kind == Kind::eq
+                    ? theme::u8 ("Range\nЯнтарные края: вне них плагин ничего не трогает. Точки — полосы EQ, светятся там, "
+                                 "где работают. Тяни край, колесо — точно, двойной клик — по умолчанию.")
+                    : theme::u8 ("Bass Mono\nЛевее бирюзовой границы Space не работает: низ остаётся в моно, там освобождает "
+                                 "только EQ. Точки — полосы Space. Бледное окно — Space Amount на 0%, Space выключен."));
     setRepaintsOnMouseActivity (true);
 }
 
@@ -72,6 +74,8 @@ RangeView::Edge RangeView::edgeAt (float x) const
     float bestDist = 9.0f;
     for (auto e : { bassMono, rangeLow, rangeHigh })
     {
+        if ((kind == Kind::eq) == (e == bassMono))
+            continue;   // each window drags only its own edges
         const float d = std::abs (xFor (value (e)) - x);
         if (d < bestDist)
             bestDist = d, best = e;
@@ -94,14 +98,24 @@ void RangeView::paint (juce::Graphics& g)
     const float lo = value (rangeLow), hi = value (rangeHigh), bm = value (bassMono);
     const float xLo = xFor (lo), xHi = xFor (hi), xBm = xFor (bm);
 
-    // Outside Range: dimmed (nothing happens there). Bass Mono zone: grey, EQ only.
+    // Outside Range: dimmed (nothing happens there).
     g.setColour (juce::Colours::black.withAlpha (0.45f));
     g.fillRect (r.withRight (xLo));
     g.fillRect (r.withLeft (xHi));
-    g.setColour (juce::Colours::white.withAlpha (0.05f));
-    g.fillRect (juce::Rectangle<float> (xLo, r.getY(), juce::jmax (0.0f, juce::jmin (xBm, xHi) - xLo), r.getHeight()));
-    g.setColour (theme::eq.withAlpha (0.07f));
-    g.fillRect (juce::Rectangle<float> (xLo, r.getY(), xHi - xLo, r.getHeight()));
+    if (kind == Kind::eq)
+    {
+        g.setColour (theme::eq.withAlpha (0.07f));
+        g.fillRect (juce::Rectangle<float> (xLo, r.getY(), xHi - xLo, r.getHeight()));
+    }
+    else
+    {
+        // Below Bass Mono: mono, EQ only (grey); above it, up to Range high: Space works (teal).
+        g.setColour (juce::Colours::white.withAlpha (0.05f));
+        g.fillRect (juce::Rectangle<float> (xLo, r.getY(), juce::jmax (0.0f, juce::jmin (xBm, xHi) - xLo), r.getHeight()));
+        const float from = juce::jmax (xBm, xLo);
+        g.setColour (theme::space.withAlpha (0.07f));
+        g.fillRect (juce::Rectangle<float> (from, r.getY(), juce::jmax (0.0f, xHi - from), r.getHeight()));
+    }
 
     // The plug-in's bells: lit when they may work (EQ inside Range; Space also above Bass Mono).
     const auto& sb = processor.state();
@@ -113,7 +127,10 @@ void RangeView::paint (juce::Graphics& g)
         const bool eqOn = hz >= lo * 1.1f && hz <= hi / 1.1f;
         const bool spaceOn = eqOn && hz >= juce::jmax (bm, lo) * 1.25f;
         const float x = xFor (hz), y = r.getCentreY();
-        g.setColour (spaceOn ? theme::space : eqOn ? theme::eq : theme::idle);
+        if (kind == Kind::eq)
+            g.setColour (eqOn ? theme::eq : theme::idle);
+        else
+            g.setColour (spaceOn ? theme::space : theme::idle);
         g.fillEllipse (x - 2.5f, y - 2.5f, 5.0f, 5.0f);
     }
 
@@ -132,9 +149,15 @@ void RangeView::paint (juce::Graphics& g)
         g.setColour (c);
         g.drawText (text, box, juce::Justification::centred);
     };
-    edge (bassMono, xBm, theme::space, "Bass Mono", true);
-    edge (rangeLow, xLo, theme::eq, "Range", false);
-    edge (rangeHigh, xHi, theme::eq, "Range", false);
+    if (kind == Kind::eq)
+    {
+        edge (rangeLow, xLo, theme::eq, "Range", false);
+        edge (rangeHigh, xHi, theme::eq, "Range", false);
+    }
+    else
+    {
+        edge (bassMono, xBm, theme::space, "Bass Mono", true);
+    }
 
     g.setColour (theme::border);
     g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.0f);
