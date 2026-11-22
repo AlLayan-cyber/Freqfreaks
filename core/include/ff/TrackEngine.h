@@ -30,7 +30,7 @@ struct TrackParams
     SpaceMode spaceMode = SpaceMode::spread;
     float panSign       = 1.0f;     ///< Pan Away direction: +1 left, -1 right
     bool  bypass        = false;
-    Focus focus         = Focus::smooth;
+    int   sharpStep     = 0;        ///< Sharp knob step (see sharpStepFor); 0 = the original sound
     Listen listen       = Listen::normal;
 
     float outputDb      = 0.0f;     ///< manual output trim, -12..+12 dB
@@ -72,8 +72,8 @@ public:
     const BellArray& eqBells() const noexcept           { return eqGains[(size_t) active]; }
     const BellArray& spaceBells() const noexcept        { return spaceGains[(size_t) active]; }
     const StereoProcessor& processor() const noexcept   { return chains[(size_t) active]; }
-    Focus focus() const noexcept                        { return (Focus) active; }
-    bool isFocusFading() const noexcept                 { return fadeFrom >= 0; }
+    int sharpStep() const noexcept                      { return active; }
+    bool isSharpFading() const noexcept                 { return fadeFrom >= 0 || work.chain >= 0; }
     bool hasReference() const noexcept                  { return referenceActive; }
 
     /** The attack and release times in use right now (manual or from Speed), ms. */
@@ -92,15 +92,29 @@ private:
     void updateControl (const TrackParams& params, const ReferenceSnapshot& reference) noexcept;
     void updateCompensation (const TrackParams& params) noexcept;
     void fitBells (int chain, const TrackParams& params, int passes) noexcept;
+    void startWork (int chain, const TrackParams& params, int passes, bool switching) noexcept;
+    void runWork (int maxStages) noexcept;
+    void commitWork() noexcept;
     void processChains (float* left, float* right, int numSamples) noexcept;
 
     double rate = 48000.0;
     Analyzer analyzer;
     BandSmoother smoother;
-    // One filter chain per Focus setting. Switching cross-fades from the old chain to the
+    // One filter chain per Sharp step. Switching cross-fades from the old chain to the
     // new one in ~50 ms (both run only during the fade).
-    std::array<StereoProcessor, kNumFocus> chains;
-    std::array<BellArray, kNumFocus> eqGains {}, spaceGains {}, transferWeights {};
+    std::array<StereoProcessor, kSharpSteps> chains;
+    std::array<BellArray, kSharpSteps> eqGains {}, spaceGains {}, transferWeights {};
+
+    // Above Sharp 0 the bell fit is heavier, so it is spread over the next few audio blocks
+    // (one stage per block) instead of landing in one block: no CPU peaks. At Sharp 0 the fit
+    // runs at once, exactly as before.
+    struct Work
+    {
+        int chain = -1;          // -1 = nothing pending
+        int stage = 0, stages = 0;
+        bool switching = false;  // preparing a new chain: snap and cross-fade when done
+        TrackParams params;
+    } work;
     int active = 0, fadeFrom = -1, fadePos = 0, fadeLength = 2400;
     std::vector<float> fadeLeft, fadeRight;
     Budget currentBudget;

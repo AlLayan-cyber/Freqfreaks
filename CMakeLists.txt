@@ -24,7 +24,9 @@ set (FREQFREAKS_JUCE_PATH "" CACHE PATH "Path to a local JUCE 8 checkout (fetche
 add_subdirectory (core)
 
 if (FREQFREAKS_BUILD_PLUGINS)
+    include (cmake/PatchJuce.cmake)
     if (FREQFREAKS_JUCE_PATH)
+        freqfreaks_patch_juce ("${FREQFREAKS_JUCE_PATH}")
         add_subdirectory ("${FREQFREAKS_JUCE_PATH}" "${CMAKE_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
     else()
         include (FetchContent)
@@ -33,6 +35,7 @@ if (FREQFREAKS_BUILD_PLUGINS)
             GIT_TAG 8.0.9
             GIT_SHALLOW TRUE)
         FetchContent_MakeAvailable (JUCE)
+        freqfreaks_patch_juce ("${juce_SOURCE_DIR}")
     endif()
 
     add_subdirectory (plugins)

@@ -10,11 +10,11 @@
 namespace ff
 {
 
-void BellBank::prepare (double sampleRate, Focus focus)
+void BellBank::prepare (double sampleRate, int sharpStep)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
-    focusMode = focus;
-    count = bellsFor (focus);
+    stepIndex = sharpStep < 0 ? 0 : (sharpStep >= kSharpSteps ? kSharpSteps - 1 : sharpStep);
+    count = bellsForStep (stepIndex);
     oversample = count > 16 ? 2 : 1;
     grid = count > 16 ? kMaxGrid : 32;
 
@@ -245,7 +245,7 @@ float BellBank::cutAt (float hz, const BellArray& gains) const noexcept
     return (float) -db;
 }
 
-void BellBank::fitTransfer (const BellArray& spaceCutDb, BellArray& weights) const noexcept
+void BellBank::fitTransfer (const BellArray& spaceCutDb, BellArray& weights, int iterations) const noexcept
 {
     // Target magnitude of the transfer at each grid point: sqrt(1 - |H|^2).
     std::array<float, kMaxGrid> target {};
@@ -277,7 +277,7 @@ void BellBank::fitTransfer (const BellArray& spaceCutDb, BellArray& weights) con
         }
 
     // Projected gradient on 0.5 * sum_j (|T_j| - target_j)^2, w >= 0 (warm-started per frame).
-    for (int it = 0; it < 16; ++it)
+    for (int it = 0; it < iterations; ++it)
     {
         std::array<float, kNumBells> grad {};
         for (int j = 0; j < grid; ++j)

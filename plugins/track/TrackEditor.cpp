@@ -12,7 +12,7 @@ using theme::u8;
 
 namespace
 {
-    constexpr int groupCompare = 1001, groupLevel = 1002, groupMode = 1003, groupSide = 1004, groupFocus = 1005;
+    constexpr int groupCompare = 1001, groupLevel = 1002, groupMode = 1003, groupSide = 1004;
     const juce::Rectangle<int> logoArea { 14, 12, 196, 40 };
 
     struct NamedColour { const char* name; juce::uint32 argb; };
@@ -22,8 +22,9 @@ namespace
         { "Фиолетовый", 0xffa78bfa }, { "Сиреневый", 0xffc4b5fd }, { "Розовый", 0xfff472b6 }, { "Серый", 0xff94a3b8 } };
 
     const char* listenNames[] = { "Обычный звук", "Δ всё — слышно только то, что убрано",
-                                  "Δ только EQ", "Δ только Space", "Вход без обработки" };
-    const char* listenShort[] = { "", "Δ", "Δ EQ", "Δ Sp", "IN" };
+                                  "Δ только EQ", "Δ только Space", "Вход без обработки",
+                                  "Референс — только его звук", "Трек + референс" };
+    const char* listenShort[] = { "", "Δ", "Δ EQ", "Δ Sp", "IN", "REF", "+REF" };
 
     /** "Title\nBody" tooltips feed the description block. */
     juce::String help (const char* title, const char* body)
@@ -47,16 +48,20 @@ namespace
 //==============================================================================
 ListenButton::ListenButton (TrackProcessor& p) : processor (p)
 {
-    setTooltip (help ("Прослушка (Delta)",
-                      "Клик — слышно только то, что плагин убрал из трека. Ещё клик — обычный звук. "
-                      "Правый клик — выбрать: Δ всё / только EQ / только Space / вход без обработки."));
+    setTooltip (help ("Прослушка (Delta, референс)",
+                      "Клик — слышно только то, что плагин убрал. Ещё клик — обычный звук. Правый клик — "
+                      "Δ всё / только EQ / только Space / вход / референс / трек + референс. Референс слышно "
+                      "и в соло этого трека: звук берётся с его FreqFreaks, до фейдера."));
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
 void ListenButton::paint (juce::Graphics& g)
 {
     const int mode = processor.listenMode();
-    const auto accent = mode == 0 ? theme::textDim : (mode == 4 ? theme::space : theme::eq);
+    const auto accent = mode == 0 ? theme::textDim
+                      : mode == 4 ? theme::space
+                      : mode >= 5 ? theme::reference
+                                  : theme::eq;
     auto r = getLocalBounds().toFloat();
 
     if (mode != 0)
@@ -124,11 +129,16 @@ void ListenButton::showMenu()
     juce::PopupMenu menu;
     menu.addSectionHeader (theme::u8 ("Что слушать"));
     const int mode = processor.listenMode();
-    for (int i = 0; i < 5; ++i)
+    const bool hasReference = processor.referenceId() != 0;
+    for (int i = 0; i < TrackProcessor::numListenModes; ++i)
     {
-        if (i == 1 || i == 4)
+        if (i == 1 || i == 4 || i == 5)
             menu.addSeparator();
-        menu.addItem (theme::u8 (listenNames[i]), true, mode == i,
+        // The reference modes need a reference; its sound is taken where FreqFreaks sits on its
+        // track (before its fader and pan), and works while that track is muted by a solo.
+        const bool enabled = i < 5 || hasReference;
+        menu.addItem (theme::u8 (listenNames[i]) + (i >= 5 && ! hasReference ? theme::u8 (" (выбери референс)") : juce::String()),
+                      enabled, mode == i,
                       [safe = juce::Component::SafePointer<ListenButton> (this), i] {
                           if (safe == nullptr)
                               return;
@@ -253,21 +263,19 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     levelDetail.onClick = [this] { applyLevel (1); };
     levelExpert.onClick = [this] { applyLevel (2); };
     levelSimple.setTooltip (help ("Simple", "Только главное: Amount, Space Amount и бюджет освобождения."));
-    levelDetail.setTooltip (help ("Detail", "Плюс спектр с волной подавления, Атака/Релиз и Focus."));
+    levelDetail.setTooltip (help ("Detail", "Плюс спектр с волной подавления, Атака/Релиз и Sharp."));
     levelExpert.setTooltip (help ("Expert", "Все настройки: EQ Depth, Range, Bass Mono, Mono Safety, Чувствительность."));
 
-    styleChip (focusSmooth, theme::text, groupFocus);
-    styleChip (focusFocus, theme::text, groupFocus);
-    styleChip (focusSharp, theme::text, groupFocus);
-    focusSmooth.onClick = [this] { setChoice (trackParams::focus, 0); };
-    focusFocus.onClick  = [this] { setChoice (trackParams::focus, 1); };
-    focusSharp.onClick  = [this] { setChoice (trackParams::focus, 2); };
-    focusSmooth.setTooltip (help ("Focus: Smooth", "16 широких полос (~0,8 октавы). Музыкально и незаметно — как раньше."));
-    focusFocus.setTooltip (help ("Focus: Focus", "24 полосы (~0,5 октавы). Точнее: тембр вне конфликта почти не трогается."));
-    focusSharp.setTooltip (help ("Focus: Sharp", "32 узкие полосы (~1/3 октавы). Хирургически, только конфликтные места. "
-                                                 "Может звучать резче."));
-    for (auto* b : { &focusSmooth, &focusFocus, &focusSharp })
-        addAndMakeVisible (*b);
+    sharpKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    sharpKnob.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    sharpKnob.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+    sharpKnob.setColour (juce::Slider::rotarySliderFillColourId, theme::eq);
+    sharpKnob.setDoubleClickReturnValue (true, 0.0);
+    sharpKnob.setTooltip (help ("Sharp", "Насколько узко вырезать. 0% — как раньше: 16 широких полос, музыкально и незаметно. "
+                                         "Вверх — полосы уже (до 1/3 октавы, 32 полосы): точнее, только конфликтные места, "
+                                         "но может звучать резче. Двойной клик — 0%."));
+    addAndMakeVisible (sharpKnob);
+    sharpAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::sharp, sharpKnob);
 
     addAndMakeVisible (spectrum);
     addAndMakeVisible (timing);   // over the spectrum
@@ -423,10 +431,6 @@ void TrackEditor::syncChoiceButtons()
     sideRight.setToggleState (side == 2, juce::dontSendNotification);
     for (auto* b : { &sideAuto, &sideLeft, &sideRight })
         b->setEnabled (mode == 1);
-    const int focus = (int) apvts.getRawParameterValue (trackParams::focus)->load();
-    focusSmooth.setToggleState (focus == 0, juce::dontSendNotification);
-    focusFocus.setToggleState (focus == 1, juce::dontSendNotification);
-    focusSharp.setToggleState (focus == 2, juce::dontSendNotification);
     compareA.setToggleState (bypassed, juce::dontSendNotification);
     compareB.setToggleState (! bypassed, juce::dontSendNotification);
 }
@@ -440,8 +444,7 @@ void TrackEditor::applyLevel (int level)
 
     spectrum.setVisible (level >= 1);
     timing.setVisible (level >= 1);
-    for (auto* b : { &focusSmooth, &focusFocus, &focusSharp })
-        b->setVisible (level >= 1);
+    sharpKnob.setVisible (level >= 1);
     for (auto* row : { &eqDepth, &rangeLow, &rangeHigh, &bassMono, &monoSafety, &sensitivity })
     {
         row->label.setVisible (level == 2);
@@ -529,7 +532,7 @@ void TrackEditor::timerCallback()
         shownRefName = {};
     }
     spectrum.setData (own, processor.trackColour(), haveRef ? &ref : nullptr, shownRefColour,
-                      shownRefName, bassHz, &processor.bellBank ((int) own.focus));
+                      shownRefName, bassHz, &processor.bellBank ((int) own.sharpStep));
     budget.setData (own);
     shownCompensationDb = own.compensationDb;
     timing.repaint();
@@ -589,13 +592,9 @@ void TrackEditor::resized()
         // where the wave and the spectrum are usually quiet.
         timing.setBounds (spectrum.getX() + 10, spectrum.getY() + 26, 96, 96);
 
-        // Focus chips at the right end of the card's title row.
+        // Sharp: a small knob at the right end of the card's title row.
         auto row = spectrumCard.reduced (16, 12).removeFromTop (22);
-        focusSharp.setBounds (row.removeFromRight (58));
-        row.removeFromRight (4);
-        focusFocus.setBounds (row.removeFromRight (54));
-        row.removeFromRight (4);
-        focusSmooth.setBounds (row.removeFromRight (62));
+        sharpKnob.setBounds (juce::Rectangle<int> (34, 34).withCentre ({ row.getRight() - 17, row.getCentreY() + 1 }));
     }
     else
     {
@@ -717,7 +716,14 @@ void TrackEditor::paint (juce::Graphics& g)
 
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
-        g.drawText ("Focus", focusSmooth.getX() - 44, focusSmooth.getY(), 40, focusSmooth.getHeight(), juce::Justification::centredRight);
+        // "Sharp 40 % · Q 2.8", or "Sharp 0 % · как раньше".
+        const float sharp = processor.state().getRawParameterValue (trackParams::sharp)->load();
+        const int step = sharpStepFor (sharp / 100.0f);
+        const juce::String sharpText = "Sharp " + juce::String (juce::roundToInt (sharp)) + " %  "
+            + (step == 0 ? u8 ("· как раньше") : u8 ("· Q ") + juce::String (processor.bellBank (step).q (0), 1)
+                                                  + u8 (" · полос ") + juce::String (bellsForStep (step)));
+        g.setColour (step == 0 ? theme::textDim : theme::eq);
+        g.drawText (sharpText, sharpKnob.getX() - 214, spectrumCard.getY() + 12, 208, 22, juce::Justification::centredRight);
     }
 
     // Budget card + legend.
@@ -745,7 +751,13 @@ void TrackEditor::paint (juce::Graphics& g)
         juce::String status;
         juce::Colour statusColour = theme::space;
         const int listen = processor.listenMode();
-        if (listen == 4)
+        if (listen >= 5 && ! processor.isReferenceAudioLive())
+            status = u8 ("Звук референса не приходит"), statusColour = theme::eq;
+        else if (listen == 5)
+            status = u8 ("Слушаешь референс"), statusColour = theme::reference;
+        else if (listen == 6)
+            status = u8 ("Слушаешь трек + референс"), statusColour = theme::reference;
+        else if (listen == 4)
             status = u8 ("Слушаешь вход без обработки");
         else if (listen != 0)
             status = u8 ("Delta: слышно только убранное"), statusColour = theme::eq;
@@ -910,7 +922,7 @@ void TrackEditor::updateHelp()
     {
         title = u8 ("Подсказка · наведи мышь на ручку");
         text = u8 ("Simple — Amount, Space Amount, бюджет.\n"
-                   "Detail — плюс спектр, волна, Атака/Релиз, Focus.\n"
+                   "Detail — плюс спектр, волна, Атака/Релиз, Sharp.\n"
                    "Expert — все настройки: EQ, Range, Bass Mono…\n"
                    "Link — EQ добирает то, что не успел Space.");
     }

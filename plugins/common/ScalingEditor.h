@@ -17,11 +17,17 @@ namespace ff
     overlaps while dragging, and text and lines are drawn sharp at every size.
 
     The size is stored with the session (through onScaleChanged) and remembered as the
-    default for new windows (a small settings file under the user's app data). */
+    default for new windows (a small settings file under the user's app data). A window
+    never opens bigger than the screen: on a laptop it starts smaller to fit. If the DAW
+    gives the window another shape, the UI is fitted inside and centred, and the margins
+    are the plug-in's own background (no bars). */
 class ScalingEditor : public juce::AudioProcessorEditor
 {
 public:
-    static constexpr float kMinScale = 0.75f, kMaxScale = 2.0f;
+    static constexpr float kMinScale = 0.6f, kMaxScale = 2.0f;
+
+    /** Largest scale at which the window fits on the screen it opens on (DAW frame included). */
+    static float fitToScreen (int baseWidth, int baseHeight);
 
     ScalingEditor (juce::AudioProcessor&, std::unique_ptr<juce::Component> content, int baseWidth, int baseHeight,
                    juce::String settingsKey, float savedScale, std::function<void (float)> onScaleChanged);

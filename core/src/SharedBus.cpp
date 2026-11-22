@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ff/SharedBus.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <random>
@@ -247,6 +248,8 @@ bool SharedBus::claim (std::uint64_t instanceId)
                 empty.kind = bus::Kind::track;
                 seqWrite (s.sequence, s.data, empty);
 
+                s.audioWritten.store (0, std::memory_order_release);
+
                 // Drop any command left for a previous owner of this slot.
                 bus::RemoteCommand previous, cleared;
                 seqRead (s.remoteSequence, s.remote, previous);
@@ -285,6 +288,66 @@ void SharedBus::publish (const bus::TrackData& data) noexcept
         return;   // the slot was taken over; ownsSlot() tells the owner to claim again
     seqTryWrite (s.sequence, s.data, data);
     s.heartbeatMs.store (nowMs(), std::memory_order_relaxed);
+}
+
+void SharedBus::publishAudio (const float* left, const float* right, int numFrames) noexcept
+{
+    if (mySlot < 0 || numFrames <= 0)
+        return;
+    auto& s = mem->slots[mySlot];
+    if (s.owner.load (std::memory_order_relaxed) != myId)
+        return;
+    constexpr std::uint64_t mask = bus::kAudioFrames - 1;
+    const auto written = s.audioWritten.load (std::memory_order_relaxed);
+    for (int i = 0; i < numFrames; ++i)
+    {
+        const auto at = (std::size_t) ((written + (std::uint64_t) i) & mask) * 2;
+        s.audio[at] = left[i];
+        s.audio[at + 1] = right[i];
+    }
+    s.audioWritten.store (written + (std::uint64_t) numFrames, std::memory_order_release);
+}
+
+SharedBus::AudioRead SharedBus::readAudio (std::uint64_t id, std::uint64_t& readPos, float* left, float* right,
+                                           int numFrames) const noexcept
+{
+    std::fill (left, left + numFrames, 0.0f);
+    std::fill (right, right + numFrames, 0.0f);
+    if (id == 0 || numFrames <= 0 || numFrames > bus::kAudioFrames / 4)
+        return AudioRead::none;
+
+    const auto now = nowMs();
+    for (int i = 0; i < bus::kMaxSlots; ++i)
+    {
+        const auto& s = mem->slots[i];
+        if (s.owner.load (std::memory_order_acquire) != id)
+            continue;
+        if (now - s.heartbeatMs.load (std::memory_order_relaxed) > bus::kStaleAfterMs)
+            return AudioRead::none;
+
+        const auto written = s.audioWritten.load (std::memory_order_acquire);
+        const auto cushion = (std::uint64_t) std::max (2 * numFrames, 512);
+        auto result = AudioRead::ok;
+        if (written < cushion)
+            return AudioRead::none;
+        if (readPos == 0 || readPos + (std::uint64_t) numFrames > written
+            || written - readPos > (std::uint64_t) (bus::kAudioFrames / 2))
+        {
+            readPos = written - cushion;
+            result = AudioRead::resynced;
+        }
+
+        constexpr std::uint64_t mask = bus::kAudioFrames - 1;
+        for (int k = 0; k < numFrames; ++k)
+        {
+            const auto at = (std::size_t) ((readPos + (std::uint64_t) k) & mask) * 2;
+            left[k] = s.audio[at];
+            right[k] = s.audio[at + 1];
+        }
+        readPos += (std::uint64_t) numFrames;
+        return result;
+    }
+    return AudioRead::none;
 }
 
 bool SharedBus::ownsSlot() const noexcept

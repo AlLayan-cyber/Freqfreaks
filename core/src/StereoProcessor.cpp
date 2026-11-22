@@ -43,10 +43,10 @@ float Decorrelator::process (float x) noexcept
 }
 
 //==============================================================================
-void StereoProcessor::prepare (double sampleRate, Focus focus)
+void StereoProcessor::prepare (double sampleRate, int sharpStep)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
-    bells.prepare (rate, focus);
+    bells.prepare (rate, sharpStep);
     shortDecorrelator.prepare (rate, { 1.13f, 1.71f, 2.39f, 3.07f });
     longDecorrelator.prepare (rate, { 3.71f, 5.29f, 7.93f, 11.27f });
 

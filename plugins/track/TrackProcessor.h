@@ -36,7 +36,7 @@ namespace trackParams
     inline constexpr const char* release     = "release";
     inline constexpr const char* attackManual  = "attackManual";
     inline constexpr const char* releaseManual = "releaseManual";
-    inline constexpr const char* focus       = "focus";
+    inline constexpr const char* sharp       = "sharp";
 }
 
 /** FreqFreaks Track: sits on each track, yields room to its reference track.
@@ -116,9 +116,14 @@ public:
     };
     HostInfo hostInfo() const;
 
-    /** Monitoring: 0 normal, 1 Delta (all), 2 Delta EQ, 3 Delta Space, 4 input. Not saved. */
+    /** Monitoring: 0 normal, 1 Delta (all), 2 Delta EQ, 3 Delta Space, 4 input,
+        5 the reference track alone, 6 this track + the reference. Not saved. */
+    enum ListenMode { listenNormal = 0, listenInput = 4, listenReference = 5, listenWithReference = 6, numListenModes = 7 };
     int listenMode() const noexcept                        { return listen.load(); }
-    void setListenMode (int m) noexcept                    { listen = juce::jlimit (0, 4, m); }
+    void setListenMode (int m) noexcept                    { listen = juce::jlimit (0, numListenModes - 1, m); }
+
+    /** True while the reference's audio is arriving (for the reference listening modes). */
+    bool isReferenceAudioLive() const noexcept             { return referenceAudioLive.load(); }
 
     /** Editor size, as a scale of the base size (0 = not set yet). Stored with the session. */
     float editorScale() const noexcept                     { return scale.load(); }
@@ -136,7 +141,7 @@ public:
     float currentReleaseMs() const noexcept                { return releaseInUse.load(); }
 
     /** Exact cut curve of this track's filters, for the editor (message thread). */
-    const BellBank& bellBank (int focus) const noexcept    { return displayBanks[(size_t) juce::jlimit (0, kNumFocus - 1, focus)]; }
+    const BellBank& bellBank (int sharpStep) const noexcept { return displayBanks[(size_t) juce::jlimit (0, kSharpSteps - 1, sharpStep)]; }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -150,7 +155,7 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     SharedBus bus;
     TrackEngine engine;
-    std::array<BellBank, kNumFocus> displayBanks;   // same layouts as the engine's, prepared on the message thread
+    std::array<BellBank, kSharpSteps> displayBanks;   // same layouts as the engine's, prepared on the message thread
 
     std::atomic<std::uint64_t> reference { 0 };
     std::atomic<int> level { 1 }, listen { 0 };
@@ -175,6 +180,13 @@ private:
     std::uint64_t lastReferenceId = 0, lastReferenceMs = 0;
     std::vector<float> monoScratch;
 
+    // Reference listening (audio thread).
+    void mixReference (float* left, float* right, int numSamples, int mode);
+    std::vector<float> refLeft, refRight;
+    std::uint64_t refReadPos = 0;
+    float refGain = 0.0f, trackGain = 1.0f, listenCoeff = 0.999f;
+    std::atomic<bool> referenceAudioLive { false };
+
     struct Raw
     {
         std::atomic<float>* amount = nullptr;
@@ -197,7 +209,7 @@ private:
         std::atomic<float>* release = nullptr;
         std::atomic<float>* attackManual = nullptr;
         std::atomic<float>* releaseManual = nullptr;
-        std::atomic<float>* focus = nullptr;
+        std::atomic<float>* sharp = nullptr;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TrackProcessor)

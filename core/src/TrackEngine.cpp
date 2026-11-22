@@ -15,8 +15,8 @@ void TrackEngine::prepare (double sampleRate, int maxBlockSize)
     analyzer.prepare (rate);
     smoother.prepare (analyzer.frameRateHz());
     paramCoeff = (float) std::exp (-1.0 / (0.060 * analyzer.frameRateHz()));   // ~60 ms knob smoothing
-    for (int f = 0; f < kNumFocus; ++f)
-        chains[(size_t) f].prepare (rate, (Focus) f);
+    for (int f = 0; f < kSharpSteps; ++f)
+        chains[(size_t) f].prepare (rate, f);
     fadeLength = std::max (1, (int) std::lround (0.050 * rate));
     fadeLeft.assign ((size_t) std::max (64, maxBlockSize), 0.0f);
     fadeRight.assign (fadeLeft.size(), 0.0f);
@@ -37,7 +37,8 @@ void TrackEngine::reset() noexcept
     fadeFrom = -1;
     fadePos = 0;
     currentBudget = {};
-    for (int f = 0; f < kNumFocus; ++f)
+    work = {};
+    for (int f = 0; f < kSharpSteps; ++f)
     {
         eqGains[(size_t) f].fill (0.0f);
         spaceGains[(size_t) f].fill (0.0f);
@@ -54,6 +55,9 @@ void TrackEngine::reset() noexcept
 
 void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& reference) noexcept
 {
+    // Work left from the previous frame (only with very large blocks) is finished first.
+    runWork (1 << 20);
+
     MaskingSettings ms;
     ms.sensitivityDb = p.sensitivityDb;
     ms.rangeLowHz = p.rangeLowHz;
@@ -85,30 +89,98 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
     bs.bassMonoHz = p.bassMonoHz;
     currentBudget = splitBudget (smoothed, bs);
 
-    // Focus: switch to another filter chain with a short cross-fade (one switch at a time).
-    const int wanted = std::clamp ((int) p.focus, 0, kNumFocus - 1);
+    // Sharp: switch to another filter chain with a short cross-fade (one switch at a time).
+    // The new chain is fitted from scratch over the next blocks, then fades in.
+    const int wanted = std::clamp (p.sharpStep, 0, kSharpSteps - 1);
     if (wanted != active && fadeFrom < 0)
     {
-        fadeFrom = active;
-        active = wanted;
-        fadePos = 0;
-        auto& next = chains[(size_t) active];
+        auto& next = chains[(size_t) wanted];
         next.reset();
-        eqGains[(size_t) active].fill (0.0f);
-        spaceGains[(size_t) active].fill (0.0f);
-        transferWeights[(size_t) active].fill (0.0f);
-        fitBells (active, p, 4);   // converge from scratch before it is heard (the fade hides the rest)
-        next.setListen (p.listen);
-        next.snapToTargets();
+        eqGains[(size_t) wanted].fill (0.0f);
+        spaceGains[(size_t) wanted].fill (0.0f);
+        transferWeights[(size_t) wanted].fill (0.0f);
+        startWork (wanted, p, 4, true);
+    }
+    else if (active == 0)
+    {
+        fitBells (active, p, 1);   // Sharp 0: at once, exactly as before
     }
     else
     {
-        fitBells (active, p, 1);
+        startWork (active, p, 1, false);
     }
 
     updateCompensation (p);
     for (auto& c : chains)
         c.setListen (p.listen);
+    runWork (1);
+}
+
+void TrackEngine::startWork (int chain, const TrackParams& p, int passes, bool switching) noexcept
+{
+    work.chain = chain;
+    work.stage = 0;
+    work.stages = 4 * passes;
+    work.switching = switching;
+    work.params = p;
+}
+
+void TrackEngine::runWork (int maxStages) noexcept
+{
+    for (int done = 0; done < maxStages && work.chain >= 0; ++done)
+    {
+        const auto& p = work.params;
+        const auto& bank = chains[(size_t) work.chain].bank();
+        auto& eq = eqGains[(size_t) work.chain];
+        auto& space = spaceGains[(size_t) work.chain];
+        auto& transfer = transferWeights[(size_t) work.chain];
+        const float spaceLowHz = std::max (p.bassMonoHz, p.rangeLowHz);
+
+        // One pass = EQ fit, Space fit, and the transfer fit in two halves: four similar-sized stages.
+        switch (work.stage % 4)
+        {
+            case 0:
+                bank.fit (currentBudget.eq, BellBank::rangeWeights (p.rangeLowHz, p.rangeHighHz),
+                          bank.bellsWithin (p.rangeLowHz * 1.1f, p.rangeHighHz / 1.1f), p.eqDepthDb, eq);
+                break;
+            case 1:
+                bank.fit (currentBudget.space, BellBank::rangeWeights (spaceLowHz, p.rangeHighHz),
+                          bank.bellsWithin (spaceLowHz * 1.25f, p.rangeHighHz / 1.1f), p.monoSafetyDb, space);
+                break;
+            default:
+                bank.fitTransfer (space, transfer, 8);
+                break;
+        }
+
+        if (++work.stage >= work.stages)
+            commitWork();
+    }
+}
+
+void TrackEngine::commitWork() noexcept
+{
+    const auto& p = work.params;
+    auto& stereo = chains[(size_t) work.chain];
+    if (p.bypass)
+    {
+        BellArray zero {};
+        stereo.setTargets (zero, zero, zero, p.spaceMode, p.panSign);
+    }
+    else
+    {
+        stereo.setTargets (eqGains[(size_t) work.chain], spaceGains[(size_t) work.chain],
+                           transferWeights[(size_t) work.chain], p.spaceMode, p.panSign);
+    }
+
+    if (work.switching && work.chain != active && fadeFrom < 0)
+    {
+        stereo.setListen (p.listen);
+        stereo.snapToTargets();
+        fadeFrom = active;
+        active = work.chain;
+        fadePos = 0;
+    }
+    work.chain = -1;
 }
 
 void TrackEngine::fitBells (int chain, const TrackParams& p, int passes) noexcept
@@ -251,6 +323,8 @@ void TrackEngine::process (float* left, float* right, int numSamples,
 {
     if (analyzer.process (left, right, numSamples) > 0)
         updateControl (params, reference);
+    else
+        runWork (1);   // the rest of a Sharp fit, one stage per block
 
     // Lookahead: delay the audio, not the analysis.
     const int len = (int) delayLeft.size();

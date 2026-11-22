@@ -50,9 +50,9 @@ TrackProcessor::TrackProcessor()
     raw.release     = parameters.getRawParameterValue (release);
     raw.attackManual  = parameters.getRawParameterValue (attackManual);
     raw.releaseManual = parameters.getRawParameterValue (releaseManual);
-    raw.focus = parameters.getRawParameterValue (focus);
-    for (int f = 0; f < kNumFocus; ++f)
-        displayBanks[(size_t) f].prepare (48000.0, (Focus) f);
+    raw.sharp = parameters.getRawParameterValue (sharp);
+    for (int f = 0; f < kSharpSteps; ++f)
+        displayBanks[(size_t) f].prepare (48000.0, f);
 
     claimSlot (SharedBus::makeInstanceId());
     refreshBusName();
@@ -122,8 +122,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackProcessor::createLayout
     layout.add (millis (release, "Release", 20.0f, 3000.0f, 400.0f));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { attackManual, 1 }, "Attack Manual", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { releaseManual, 1 }, "Release Manual", false));
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { focus, 1 }, "Focus",
-                                                        StringArray { "Smooth", "Focus", "Sharp" }, 0));
+    layout.add (percent (sharp, "Sharp", 100.0f, 0.0f));   // 0 % = the original sound
     return layout;
 }
 
@@ -149,9 +148,15 @@ bool TrackProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void TrackProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
-    for (int f = 0; f < kNumFocus; ++f)
-        displayBanks[(size_t) f].prepare (sampleRate, (Focus) f);
+    for (int f = 0; f < kSharpSteps; ++f)
+        displayBanks[(size_t) f].prepare (sampleRate, f);
     monoScratch.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
+    refLeft.assign ((size_t) juce::jlimit (64, bus::kAudioFrames / 4, samplesPerBlock), 0.0f);
+    refRight.assign (refLeft.size(), 0.0f);
+    refReadPos = 0;
+    refGain = 0.0f;
+    trackGain = 1.0f;
+    listenCoeff = (float) std::exp (-1.0 / (0.010 * juce::jmax (8000.0, sampleRate)));   // ~10 ms
     setLatencySamples (engine.latencySamples());
 }
 
@@ -175,8 +180,10 @@ TrackParams TrackProcessor::readParams() const noexcept
     p.spaceComp     = raw.spaceComp->load() > 0.5f;
     p.attackMs      = raw.attackManual->load() > 0.5f ? raw.attack->load() : 0.0f;
     p.releaseMs     = raw.releaseManual->load() > 0.5f ? raw.release->load() : 0.0f;
-    p.focus         = (Focus) juce::jlimit (0, kNumFocus - 1, (int) raw.focus->load());
-    p.listen        = (Listen) juce::jlimit (0, 4, listen.load());
+    p.sharpStep     = sharpStepFor (raw.sharp->load() / 100.0f);
+    // Reference modes are mixed in here, after the engine: for the engine they are "normal".
+    const int mode = listen.load();
+    p.listen        = (Listen) (mode <= 4 ? juce::jmax (0, mode) : 0);
 
     const int side = (int) raw.panSide->load();
     p.panSign = side == 1 ? 1.0f : side == 2 ? -1.0f : ((instanceId() & 1u) ? 1.0f : -1.0f);
@@ -292,6 +299,12 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
         }
     }
 
+    // Our own output, for the tracks that yield to us and want to hear it (before any of
+    // our reference is mixed in).
+    bus.publishAudio (left, right != nullptr ? right : left, numSamples);
+
+    mixReference (left, right, numSamples, forceBypass ? (int) listenNormal : listen.load());
+
     attackInUse = engine.attackMs();
     releaseInUse = engine.releaseMs();
 
@@ -328,11 +341,57 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
     d.compensationDb = engine.compensationDb();
     d.spaceMode = (std::uint32_t) params.spaceMode;
     d.hubTrim = trim;
-    d.focus = (std::uint32_t) engine.focus();
+    d.sharpStep = (std::uint32_t) engine.sharpStep();
     d.listen = (std::uint32_t) params.listen;
     d.flags = (params.bypass ? bus::flagBypassed : 0u) | (referenceLost ? bus::flagReferenceLost : 0u)
             | (params.link ? 0u : bus::flagLinkOff) | (hubOff ? bus::flagHubBypassed : 0u);
     bus.publish (d);
+}
+
+void TrackProcessor::mixReference (float* left, float* right, int numSamples, int mode)
+{
+    // Reference alone / this track + reference: the reference's own output comes over the bus.
+    const float refTarget = (mode == listenReference || mode == listenWithReference) ? 1.0f : 0.0f;
+    const float trackTarget = mode == listenReference ? 0.0f : 1.0f;
+    if (refTarget == 0.0f && refGain < 1.0e-5f && trackGain > 1.0f - 1.0e-5f)
+    {
+        refGain = 0.0f;
+        trackGain = 1.0f;
+        refReadPos = 0;   // start fresh next time
+        referenceAudioLive = false;
+        return;
+    }
+
+    const auto refId = reference.load();
+    const int chunk = (int) refLeft.size();
+    bool live = false;
+    for (int start = 0; start < numSamples; start += chunk)
+    {
+        const int n = juce::jmin (chunk, numSamples - start);
+        const auto result = bus.readAudio (refId, refReadPos, refLeft.data(), refRight.data(), n);
+        live = live || result != SharedBus::AudioRead::none;
+        if (result == SharedBus::AudioRead::resynced)
+            refGain = 0.0f;   // jumped back into place: fade in instead of a click
+
+        float* l = left + start;
+        float* r = right != nullptr ? right + start : nullptr;
+        for (int i = 0; i < n; ++i)
+        {
+            refGain = refTarget + listenCoeff * (refGain - refTarget);
+            trackGain = trackTarget + listenCoeff * (trackGain - trackTarget);
+            const float rl = refLeft[(size_t) i], rr = refRight[(size_t) i];
+            if (r != nullptr)
+            {
+                l[i] = trackGain * l[i] + refGain * rl;
+                r[i] = trackGain * r[i] + refGain * rr;
+            }
+            else
+            {
+                l[i] = trackGain * l[i] + refGain * 0.5f * (rl + rr);
+            }
+        }
+    }
+    referenceAudioLive = live;
 }
 
 void TrackProcessor::timerCallback()

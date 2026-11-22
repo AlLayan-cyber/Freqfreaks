@@ -11,15 +11,23 @@
 namespace ff
 {
 
-/** Most bells any Focus setting uses; arrays are always this long, unused bells stay at 0. */
+/** Most bells any Sharp setting uses; arrays are always this long, unused bells stay at 0. */
 constexpr int kNumBells = 32;
 using BellArray = std::array<float, kNumBells>;
 
-/** How narrow the suppression is: Smooth 16 wide bells (~0.8 oct), Focus 24 (~0.5 oct),
-    Sharp 32 (~1/3 oct). */
-enum class Focus { smooth = 0, focus = 1, sharp = 2 };
-constexpr int kNumFocus = 3;
-constexpr int bellsFor (Focus f) noexcept     { return f == Focus::sharp ? 32 : f == Focus::focus ? 24 : 16; }
+/** How narrow the suppression is (the Sharp knob), in steps: 0 = 16 wide bells (~0.8 oct,
+    the original sound), then 20, 24, 28 and 32 bells (~1/3 oct). More bells, narrower each. */
+constexpr int kSharpSteps = 5;
+constexpr int bellsForStep (int step) noexcept { return 16 + 4 * (step < 0 ? 0 : (step >= kSharpSteps ? kSharpSteps - 1 : step)); }
+
+/** Sharp knob 0..1 -> step: exactly 0 is step 0 (as before), anything above uses steps 1..4. */
+constexpr int sharpStepFor (float sharp01) noexcept
+{
+    if (sharp01 <= 0.0f)
+        return 0;
+    const int s = (int) (sharp01 * (float) (kSharpSteps - 1) + 0.999f);
+    return s < 1 ? 1 : (s > kSharpSteps - 1 ? kSharpSteps - 1 : s);
+}
 
 /** A fixed bank of smooth, overlapping bell filters, and a fitter that turns a
     per-band cut curve into bell gains.
@@ -36,10 +44,10 @@ constexpr int bellsFor (Focus f) noexcept     { return f == Focus::sharp ? 32 : 
 class BellBank
 {
 public:
-    void prepare (double sampleRate, Focus focus = Focus::smooth);
+    void prepare (double sampleRate, int sharpStep = 0);
 
     double sampleRate() const noexcept               { return rate; }
-    Focus focus() const noexcept                     { return focusMode; }
+    int sharpStep() const noexcept                   { return stepIndex; }
     int size() const noexcept                        { return count; }
     float centreHz (int bell) const noexcept         { return fc[(size_t) bell]; }
     float q (int bell) const noexcept                { return qs[(size_t) bell]; }
@@ -69,7 +77,7 @@ public:
         when |T(f)|^2 = 1 - |H(f)|^2 at every frequency. The band-passes overlap and
         add coherently, so the weights are fitted to that target on a fine grid
         (warm-started from the previous call). */
-    void fitTransfer (const BellArray& spaceCutDb, BellArray& weights) const noexcept;
+    void fitTransfer (const BellArray& spaceCutDb, BellArray& weights, int iterations = 16) const noexcept;
 
     /** |T(f)|^2 / (1 - |H(f)|^2) error report for tests: worst ratio in dB over the grid
         where at least minMovedDb of energy is moved. */
@@ -94,7 +102,7 @@ private:
     mutable int eigenNext = 0;
 
     double rate = 48000.0;
-    Focus focusMode = Focus::smooth;
+    int stepIndex = 0;
     int count = 16, oversample = 1;
     BellArray fc {}, qs {};
     static constexpr int kMaxFitPoints = 2 * kNumBands - 1;

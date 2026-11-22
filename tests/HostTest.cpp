@@ -285,6 +285,20 @@ int main (int argc, char** argv)
     const auto guitarId = stateOf (*guitar).getProperty ("instanceId").toString();
     check (vocalId.isNotEmpty() && vocalId != guitarId, "every instance gets its own id");
 
+    // The DAW's track name and colour reach the plug-in (VST3 IInfoListener), Cyrillic included.
+    {
+        juce::AudioProcessor::TrackProperties props;
+        props.name = juce::String::fromUTF8 ("Вокал главный");
+        props.colour = juce::Colour (0xffe879f9);
+        vocal->updateTrackProperties (props);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        const auto st = stateOf (*vocal);
+        check (st.getProperty ("trackName").toString() == juce::String::fromUTF8 ("Вокал главный"),
+               "the DAW's track name arrives (got \"" + st.getProperty ("trackName").toString() + "\")");
+        check ((juce::uint32) st.getProperty ("hostColour").toString().getHexValue64() == 0xffe879f9u,
+               "the DAW's track colour arrives");
+    }
+
     Source vocalSrc (1, 0.03f, true), guitarSrc (2, 0.25f, false);
 
     // 1. No reference -> nothing happens.

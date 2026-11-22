@@ -477,8 +477,8 @@ void testClicks()
         { "Auto gain on",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.autoGain = true; } },
         { "Output +6 dB",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.outputDb = 6.0f; } },
         { "reference lost",            [] (ff::TrackParams&, ff::ReferenceSnapshot& r) { r.valid = false; } },
-        { "Focus -> Sharp",            [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.focus = ff::Focus::sharp; } },
-        { "Focus -> Focus",            [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.focus = ff::Focus::focus; } },
+        { "Sharp 0 -> 100 %",          [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.sharpStep = ff::sharpStepFor (1.0f); } },
+        { "Sharp 0 -> 30 %",           [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.sharpStep = ff::sharpStepFor (0.3f); } },
         { "Delta on",                  [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::deltaAll; } },
         { "Delta EQ only",             [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::deltaEq; } },
         { "input monitoring",          [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::input; } },
@@ -497,7 +497,7 @@ void testClicks()
     }
 }
 
-void testFocus()
+void testSharp()
 {
     const auto& layout = ff::BandLayout::get();
 
@@ -512,11 +512,14 @@ void testFocus()
     ones.fill (1.0f);
 
     float besideSmooth = 0.0f, centrePrev = 1.5f;
-    for (auto focus : { ff::Focus::smooth, ff::Focus::focus, ff::Focus::sharp })
+    CHECK (ff::sharpStepFor (0.0f) == 0);
+    CHECK (ff::sharpStepFor (0.01f) == 1);
+    CHECK (ff::sharpStepFor (1.0f) == ff::kSharpSteps - 1);
+    for (int focus = 0; focus < ff::kSharpSteps; ++focus)
     {
         ff::BellBank bank;
         bank.prepare (kRate, focus);
-        CHECK (bank.size() == ff::bellsFor (focus));
+        CHECK (bank.size() == ff::bellsForStep (focus));
         std::array<bool, ff::kNumBells> allowed {};
         allowed.fill (true);
         ff::BellArray gains {};
@@ -527,12 +530,12 @@ void testFocus()
 
         const float centre = bank.cutAt (2500.0f, gains);
         const float beside = 0.5f * (bank.cutAt (1250.0f, gains) + bank.cutAt (5000.0f, gains));
-        std::printf ("  info: focus %d (%d bells, Q %.2f): cut at 2.5 kHz %.2f dB, an octave beside %.2f dB\n",
+        std::printf ("  info: Sharp step %d (%d bells, Q %.2f): cut at 2.5 kHz %.2f dB, an octave beside %.2f dB\n",
                      (int) focus, bank.size(), bank.q (0), centre, beside);
         // The narrower the bells, the closer the cut gets to a narrow conflict, and the less around it.
         CHECK (centre > centrePrev);
         centrePrev = centre;
-        if (focus == ff::Focus::smooth)
+        if (focus == 0)
             besideSmooth = beside;
         else
             CHECK (beside < besideSmooth);
@@ -560,7 +563,7 @@ void testFocus()
         for (int i = 0; i < 40; ++i)
             bank.fitTransfer (space, weights);
         const float err = bank.transferErrorDb (space, weights);
-        std::printf ("  info: focus %d transfer energy error %.2f dB\n", (int) focus, err);
+        std::printf ("  info: Sharp step %d transfer energy error %.2f dB\n", (int) focus, err);
         CHECK (err < 1.0f);
     }
 }
@@ -575,21 +578,21 @@ void testDelta()
 
     const int block = 256, n = block * 400;
     const auto srcL = noise (n, 11, 0.2f), srcR = noise (n, 12, 0.2f);
-    auto run = [&] (ff::Listen listen, ff::Focus focus) {
+    auto run = [&] (ff::Listen listen, int focus) {
         ff::TrackEngine e;
         e.prepare (kRate, block);
         ff::TrackParams p;
         p.amount = 1.0f;
         p.spaceComp = false;
         p.listen = listen;
-        p.focus = focus;
+        p.sharpStep = focus;
         std::pair<std::vector<float>, std::vector<float>> out { srcL, srcR };
         for (int i = 0; i < n; i += block)
             e.process (out.first.data() + i, out.second.data() + i, block, p, ref);
         return out;
     };
 
-    for (auto focus : { ff::Focus::smooth, ff::Focus::sharp })
+    for (int focus : { 0, ff::kSharpSteps - 1 })
     {
         const auto normal = run (ff::Listen::normal, focus);
         const auto delta = run (ff::Listen::deltaAll, focus);
@@ -609,12 +612,126 @@ void testDelta()
             worstInput = std::max (worstInput, std::abs (input.first[u] - dryL));
             deltaPower += (double) delta.first[u] * delta.first[u];
         }
-        std::printf ("  info: focus %d delta: |normal + delta - dry| %.1e, |dEq + dSpace - d| %.1e, delta %.1f dB\n",
+        std::printf ("  info: Sharp step %d delta: |normal + delta - dry| %.1e, |dEq + dSpace - d| %.1e, delta %.1f dB\n",
                      (int) focus, worstSum, worstSplit, 10.0 * std::log10 (deltaPower / (n / 2) / 0.04));
         CHECK (worstSum < 1.0e-4);
         CHECK (worstSplit < 1.0e-4);
         CHECK (worstInput < 1.0e-6);
         CHECK (deltaPower > 1.0e-6 * n);   // something was taken away
+    }
+}
+
+void testSharpZeroAsBefore()
+{
+    // Output of versions 18 and 19 (before the Sharp knob, identical) for a fixed input. At Sharp 0 the
+    // engine must give the same sound; the tolerance only allows for compiler rounding
+    // (FMA on Apple silicon), far below anything audible (-100 dB).
+    std::uint32_t seed = 12345;
+    auto rnd = [&] { seed = seed * 1664525u + 1013904223u; return (float) ((seed >> 8) & 0xffff) / 32768.0f - 1.0f; };
+    ff::TrackEngine e;
+    e.prepare (kRate, 256);
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    const auto& layout = ff::BandLayout::get();
+    for (int b = 0; b < ff::kNumBands; ++b)
+    {
+        const float hz = layout.centreHz[(size_t) b];
+        ref.midDb[(size_t) b] = (hz > 250 && hz < 5000) ? -34.0f : -100.0f;
+    }
+    ff::TrackParams p;
+    p.amount = 0.9f;
+    p.speed = 0.6f;
+    p.sharpStep = ff::sharpStepFor (0.0f);
+    const int n = 256 * 562;
+    std::vector<float> L ((size_t) n), R ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        const float m = 0.2f * rnd(), sd = 0.05f * rnd();
+        L[(size_t) i] = m + sd + 0.2f * (float) std::sin (0.0654 * i);
+        R[(size_t) i] = m - sd + 0.2f * (float) std::sin (0.0654 * i);
+    }
+    for (int i = 0; i < n; i += 256)
+        e.process (L.data() + i, R.data() + i, 256, p, ref);
+
+    double el = 0.0, er = 0.0;
+    for (int i = n / 2; i < n; ++i)
+    {
+        el += (double) L[(size_t) i] * L[(size_t) i];
+        er += (double) R[(size_t) i] * R[(size_t) i];
+    }
+    std::printf ("  info: energy %.6f / %.6f (versions 18 and 19: 1832.17597 / 847.315725)\n", el, er);
+    CHECK_NEAR (el / 1832.17597, 1.0, 1.0e-5);
+    CHECK_NEAR (er / 847.315725, 1.0, 1.0e-5);
+
+    struct Sample { int index; float left, right; };
+    const Sample golden[] = {
+        { 71936, -0.0255574938f, 0.199139491f },
+        { 76035, 0.0650546029f, -0.144214779f },
+        { 80134, 0.14207451f, 0.0244364385f },
+        { 84233, -0.170602784f, -0.155334219f },
+        { 88332, -0.059274517f, -0.203179255f },
+        { 92431, 0.116913892f, 0.000360142032f },
+        { 96530, -0.257944882f, -0.0483868793f },
+        { 100629, 0.11372529f, 0.0815315619f },
+        { 104728, 0.102256522f, 0.0822139457f },
+        { 108827, -0.103001997f, 0.157464996f },
+        { 112926, 0.0186257418f, -0.206318051f },
+        { 117025, 0.0147629874f, 0.117473431f },
+        { 121124, 0.024993483f, 0.127787411f },
+        { 125223, 0.0747635365f, -0.0877726078f },
+        { 129322, 0.0602667555f, -0.0464920662f },
+        { 133421, -0.319844812f, -0.131309971f },
+    };
+    double worst = 0.0;
+    for (const auto& g : golden)
+        worst = std::max ({ worst, (double) std::abs (L[(size_t) g.index] - g.left), (double) std::abs (R[(size_t) g.index] - g.right) });
+    std::printf ("  info: largest difference to versions 18/19: %.1e\n", worst);
+    CHECK (worst < 1.0e-5);
+}
+
+void testCpu()
+{
+    // Load per track, and the heaviest single block at a 32-sample buffer. Every run is
+    // repeated and the fastest kept per block, so the machine's own hiccups don't count.
+    // The limits are generous for slow CI machines; here the numbers are about a third.
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    for (auto& x : ref.midDb)
+        x = -36.0f;
+    for (int step : { 0, ff::kSharpSteps - 1 })
+    {
+        const int block = 32, n = 48000 * 2, blocks = n / block;
+        std::vector<double> best ((size_t) blocks, 1.0e9);
+        const auto src = noise (n, 91, 0.2f);
+        for (int run = 0; run < 5; ++run)
+        {
+            ff::TrackEngine e;
+            e.prepare (kRate, block);
+            ff::TrackParams p;
+            p.amount = 1.0f;
+            p.sharpStep = step;
+            auto l = src, r = src;
+            for (int b = 0; b < blocks; ++b)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                e.process (l.data() + b * block, r.data() + b * block, block, p, ref);
+                const double us = std::chrono::duration<double, std::micro> (std::chrono::steady_clock::now() - t0).count();
+                best[(size_t) b] = std::min (best[(size_t) b], us);
+            }
+        }
+        double sum = 0.0, worst = 0.0;
+        for (int b = blocks / 4; b < blocks; ++b)
+        {
+            sum += best[(size_t) b];
+            worst = std::max (worst, best[(size_t) b]);
+        }
+        const double blockUs = 1.0e6 * block / kRate;
+        const double load = 100.0 * sum / (blocks - blocks / 4) / blockUs;
+        const double peak = 100.0 * worst / blockUs;
+        std::printf ("  info: Sharp step %d: %.1f %% of a core, heaviest 32-sample block %.0f us = %.0f %% of its time\n",
+                     step, load, worst, peak);
+        CHECK (load < 6.0);
+        CHECK (peak < 60.0);
     }
 }
 
@@ -954,6 +1071,51 @@ void testSharedBus()
 
         // A track whose slot was taken over notices and does not write into it.
         CHECK (a.ownsSlot());
+
+        // Reference listening: track a's audio, read by another track. The DAW may run the
+        // two in either order in each callback; the reader stays continuous and exact.
+        {
+            const int block = 128;
+            a.heartbeat();   // the stall test above left this track looking gone
+            std::uint64_t readPos = 0;
+            std::vector<float> l (block), r (block), gotL (block), gotR (block);
+            long long written = 0;
+            int resyncs = 0, nones = 0;
+            double worst = 0.0;
+            long long expectedStart = -1;
+            for (int cb = 0; cb < 400; ++cb)
+            {
+                const bool readerFirst = (cb * 7919) % 3 == 0;
+                auto write = [&] {
+                    for (int i = 0; i < block; ++i)
+                    {
+                        l[(size_t) i] = (float) ((written + i) % 1000);
+                        r[(size_t) i] = -l[(size_t) i];
+                    }
+                    a.publishAudio (l.data(), r.data(), block);
+                    written += block;
+                };
+                auto read = [&] {
+                    const auto res = b.readAudio (idA, readPos, gotL.data(), gotR.data(), block);
+                    if (res == ff::SharedBus::AudioRead::none) { ++nones; return; }
+                    if (res == ff::SharedBus::AudioRead::resynced) { ++resyncs; expectedStart = (long long) readPos - block; }
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const double want = (double) ((expectedStart + i) % 1000);
+                        worst = std::max ({ worst, std::abs (gotL[(size_t) i] - want), std::abs (gotR[(size_t) i] + want) });
+                    }
+                    expectedStart += block;
+                };
+                if (readerFirst) { read(); write(); } else { write(); read(); }
+            }
+            std::printf ("  info: reference audio: %d resyncs, %d blocks before audio, worst error %g\n", resyncs, nones, worst);
+            CHECK (resyncs == 1);           // only the start
+            CHECK (nones <= 4);
+            CHECK (worst == 0.0);
+            std::vector<float> sl (block), sr (block);
+            std::uint64_t pos = 0;
+            CHECK (b.readAudio (ff::SharedBus::makeInstanceId(), pos, sl.data(), sr.data(), block) == ff::SharedBus::AudioRead::none);
+        }
     }
 
    #if ! defined (_WIN32)
@@ -977,7 +1139,9 @@ int main()
         { "track engine", testTrackEngine },
         { "loudness compensation", testLoudness },
         { "no clicks on switches", testClicks },
-        { "focus", testFocus },
+        { "sharp", testSharp },
+        { "sharp 0 sounds as before", testSharpZeroAsBefore },
+        { "cpu load", testCpu },
         { "delta monitoring", testDelta },
         { "shared bus", testSharedBus },
     };

@@ -23,10 +23,11 @@ namespace ff
 namespace bus
 {
     constexpr std::uint32_t kMagic   = 0x46524551;   // "FREQ"
-    constexpr std::uint32_t kVersion = 3;   // bump on any layout change
+    constexpr std::uint32_t kVersion = 4;   // bump on any layout change
     constexpr int kMaxSlots = 64;
     constexpr int kNameLength = 48;
     constexpr int kMaxReferences = 4;
+    constexpr int kAudioFrames = 8192;               // per-track audio ring (stereo), power of two
     constexpr std::uint64_t kStaleAfterMs = 1500;    // no heartbeat for this long -> treat as gone
     constexpr std::uint64_t kReclaimAfterMs = 10000; // a crashed instance's slot may be reused
 
@@ -53,7 +54,7 @@ namespace bus
         std::uint32_t spaceMode = 0;                    // 0 Spread, 1 Pan Away, 2 Decorrelate
         float hubTrim = 1.0f;                           // the Hub's trim this track is applying
         std::uint32_t flags = 0;                        // see TrackFlags
-        std::uint32_t focus = 0;                        // bell layout of eqBells/spaceBells (ff::Focus)
+        std::uint32_t sharpStep = 0;                    // bell layout of eqBells/spaceBells (Sharp step)
         std::uint32_t listen = 0;                       // monitoring (ff::Listen), 0 = normal
     };
 
@@ -126,6 +127,10 @@ namespace bus
         TrackData data;
         std::atomic<std::uint32_t> remoteSequence;   // written by the Hub, read by the track
         RemoteCommand remote;
+
+        // The track's own output, so another track can let you listen to its reference.
+        std::atomic<std::uint64_t> audioWritten;    // frames written so far
+        float audio[kAudioFrames * 2];               // interleaved L R
     };
 
     struct HubBlock
@@ -196,6 +201,18 @@ public:
 
     /** Real-time safe: latest data of the instance with the given id. */
     bool read (std::uint64_t id, bus::TrackData& out, bool* isStale = nullptr) const noexcept;
+
+    /** Real-time safe: appends this track's output to its audio ring. */
+    void publishAudio (const float* left, const float* right, int numFrames) noexcept;
+
+    enum class AudioRead { none, ok, resynced };
+
+    /** Real-time safe: the next numFrames of another track's audio. readPos is the caller's
+        position (start with 0). The reader keeps a small cushion behind the writer, so the
+        order in which the DAW runs the two tracks does not matter; when the cushion breaks
+        (or at the start) it jumps back into place and returns resynced (fade in). none = no
+        live track with that id: the output is silence. */
+    AudioRead readAudio (std::uint64_t id, std::uint64_t& readPos, float* left, float* right, int numFrames) const noexcept;
 
     /** Hub side: asks the track with this id to change its own parameters. */
     bool sendRemote (std::uint64_t trackId, const bus::RemoteCommand& command) noexcept;

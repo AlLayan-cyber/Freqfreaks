@@ -103,7 +103,8 @@ private:
 
     juce::TextButton modeSpread { "Spread" }, modePan { "Pan Away" }, modeDecor { "Decorrelate" };
     juce::TextButton sideAuto { "Auto" }, sideLeft { "L" }, sideRight { "R" };
-    juce::TextButton focusSmooth { "Smooth" }, focusFocus { "Focus" }, focusSharp { "Sharp" };
+    juce::Slider sharpKnob;   // small knob in the spectrum card's title row
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sharpAttach;
 
     juce::Slider outputSlider;
     juce::TextButton autoGainButton { "Auto" }, spaceCompButton { "Space comp" };

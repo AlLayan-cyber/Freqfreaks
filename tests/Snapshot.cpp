@@ -102,9 +102,9 @@ int main (int argc, char** argv)
     if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::attackManual))
         p->setValueNotifyingHost (1.0f);
 
-    // Focus on the guitar, so the wave shows the narrower bells.
-    if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::focus))
-        p->setValueNotifyingHost (p->convertTo0to1 (1.0f));
+    // Sharp at 40 % on the guitar, so the wave shows the narrower bells.
+    if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::sharp))
+        p->setValueNotifyingHost (p->convertTo0to1 (40.0f));
 
     ff::HubProcessor hub;
     hub.setPlayConfigDetails (2, 2, kRate, kBlock);
@@ -123,12 +123,14 @@ int main (int argc, char** argv)
     bool ok = true;
     {
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (guitarL.processor->createEditor());
+        editor->setSize (ff::TrackEditor::kWidth, ff::TrackEditor::kHeight);   // 100 %, whatever the screen
         ok &= save (*editor, outDir.getChildFile ("track.png"));
 
         // The window scales as a whole: dragging the corner to 150 % keeps the layout.
         if (auto* scaling = dynamic_cast<ff::ScalingEditor*> (editor.get()))
         {
             const auto before = scaling->getScale();
+            ok &= std::abs (before - 1.0f) < 0.01f;
             scaling->setSize (ff::TrackEditor::kWidth * 3 / 2, ff::TrackEditor::kHeight * 3 / 2);
             ok &= std::abs (scaling->getScale() - 1.5f) < 0.01f;
             ok &= scaling->getContent().getWidth() == ff::TrackEditor::kWidth;
@@ -149,6 +151,7 @@ int main (int argc, char** argv)
     }
     {
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (hub.createEditor());
+        editor->setSize (ff::HubEditor::kWidth, ff::HubEditor::kHeight);
         ok &= save (*editor, outDir.getChildFile ("hub-map.png"));
         auto* scaling = dynamic_cast<ff::ScalingEditor*> (editor.get());
         if (auto* hubEditor = scaling != nullptr ? dynamic_cast<ff::HubEditor*> (&scaling->getContent()) : nullptr)

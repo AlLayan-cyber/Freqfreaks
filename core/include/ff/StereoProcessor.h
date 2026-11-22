@@ -51,7 +51,7 @@ private:
 class StereoProcessor
 {
 public:
-    void prepare (double sampleRate, Focus focus = Focus::smooth);
+    void prepare (double sampleRate, int sharpStep = 0);
     void reset() noexcept;
 
     /** Jumps every glide to its target at once (for a chain that is about to fade in). */
