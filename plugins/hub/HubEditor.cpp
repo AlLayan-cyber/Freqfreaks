@@ -318,8 +318,6 @@ void HubCanvas::paintStereo (juce::Graphics& g, juce::Rectangle<float> area)
 void IssuePanel::setIssues (std::vector<HubIssue> list)
 {
     issues = std::move (list);
-    if (selected >= (int) issues.size())
-        selected = -1;
     repaint();
 }
 
@@ -350,7 +348,8 @@ void IssuePanel::paint (juce::Graphics& g)
         juce::GlyphArrangement titleLines, hintLines;
         const float textW = (float) (area.getWidth() - 24 - 14);
         titleLines.addJustifiedText (theme::font (13.0f, true), is.title, 0.0f, 0.0f, textW, juce::Justification::topLeft);
-        hintLines.addJustifiedText (theme::font (11.5f), is.hint, 0.0f, 0.0f, textW, juce::Justification::topLeft);
+        const auto hintText = is.ageSeconds > 0 ? is.hint + u8 (" (было ") + juce::String (is.ageSeconds) + u8 (" с назад)") : is.hint;
+        hintLines.addJustifiedText (theme::font (11.5f), hintText, 0.0f, 0.0f, textW, juce::Justification::topLeft);
         const int titleH = juce::roundToInt (titleLines.getBoundingBox (0, -1, true).getHeight()) + 6;
         const int hintH = juce::roundToInt (hintLines.getBoundingBox (0, -1, true).getHeight()) + 2;
         auto box = area.removeFromTop (20 + titleH + hintH);
@@ -359,22 +358,25 @@ void IssuePanel::paint (juce::Graphics& g)
             break;
         itemBounds.push_back (box);
 
-        g.setColour ((int) i == selected ? theme::raised : theme::panel);
+        const bool isSelected = is.key == selectedKey;
+        const bool past = is.ageSeconds > 0;
+        g.setOpacity (1.0f);
+        g.setColour (isSelected ? theme::raised : theme::panel);
         g.fillRoundedRectangle (box.toFloat(), 10.0f);
-        g.setColour ((int) i == selected ? theme::borderLight : theme::border);
+        g.setColour (isSelected ? theme::borderLight : theme::border);
         g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 10.0f, 1.0f);
 
         auto inner = box.reduced (12, 10);
         auto dot = inner.removeFromLeft (14);
-        g.setColour (is.severe ? theme::conflict : theme::eq);
+        g.setColour ((is.severe ? theme::conflict : theme::eq).withAlpha (past ? 0.45f : 1.0f));
         g.fillEllipse ((float) dot.getX(), (float) inner.getY() + 5.0f, 8.0f, 8.0f);
 
-        g.setColour (theme::text);
+        g.setColour (theme::text.withAlpha (past ? 0.55f : 1.0f));
         g.setFont (theme::font (13.0f, true));
         g.drawFittedText (is.title, inner.removeFromTop (titleH), juce::Justification::topLeft, 4, 1.0f);
-        g.setColour (theme::textDim);
+        g.setColour (theme::textDim.withAlpha (past ? 0.6f : 1.0f));
         g.setFont (theme::font (11.5f));
-        g.drawFittedText (is.hint, inner, juce::Justification::topLeft, 10, 1.0f);
+        g.drawFittedText (hintText, inner, juce::Justification::topLeft, 10, 1.0f);
     }
 }
 
@@ -384,7 +386,7 @@ void IssuePanel::mouseDown (const juce::MouseEvent& e)
     {
         if (itemBounds[i].contains (e.getPosition()))
         {
-            selected = (int) i;
+            selectedKey = issues[i].key;
             repaint();
             if (onSelect)
                 onSelect (issues[i]);
@@ -785,6 +787,8 @@ std::vector<HubIssue> HubEditor::diagnose (const std::vector<HubTrack>& list) co
         {
             HubIssue is;
             is.trackIndex = (int) t;
+            is.trackId = tr.id;
+            is.key = juce::String::toHexString ((juce::int64) tr.id) + ":silent";
             is.title = tr.name + u8 (": референс молчит");
             is.hint = u8 ("Трек «") + tr.referenceName + u8 ("» не найден или не играет. Освобождение на паузе.");
             out.push_back (is);
@@ -837,6 +841,9 @@ std::vector<HubIssue> HubEditor::diagnose (const std::vector<HubTrack>& list) co
 
             HubIssue is;
             is.trackIndex = (int) t;
+            is.trackId = tr.id;
+            is.key = juce::String::toHexString ((juce::int64) tr.id) + ":missing";
+            is.worstDb = worst;
             is.bandFrom = bestFrom;
             is.bandTo = bestTo;
             is.severe = worst > 4.0f || atLimit;
@@ -866,6 +873,9 @@ std::vector<HubIssue> HubEditor::diagnose (const std::vector<HubTrack>& list) co
                 given = juce::jmax (given, d.eqDb[b] + d.spaceDb[b]);
             HubIssue is;
             is.trackIndex = (int) t;
+            is.trackId = tr.id;
+            is.key = juce::String::toHexString ((juce::int64) tr.id) + ":much";
+            is.worstDb = given;
             is.bandFrom = muchFrom;
             is.bandTo = muchTo;
             is.severe = false;
@@ -877,6 +887,73 @@ std::vector<HubIssue> HubEditor::diagnose (const std::vector<HubTrack>& list) co
     }
 
     std::stable_sort (out.begin(), out.end(), [] (const HubIssue& a, const HubIssue& b) { return a.severe && ! b.severe; });
+    return out;
+}
+
+std::vector<HubIssue> HubEditor::holdIssues (std::vector<HubIssue> current)
+{
+    constexpr std::uint64_t holdMs = 10000, textEveryMs = 1000;
+    const auto now = SharedBus::nowMs();
+
+    for (auto& is : current)
+    {
+        auto it = held.find (is.key);
+        if (it == held.end())
+        {
+            held[is.key] = { is, now, now, now, now };
+            continue;
+        }
+        auto& h = it->second;
+        const bool comingBack = now - h.lastSeenMs > 500;
+        h.lastSeenMs = now;
+        if (comingBack)
+            h.firstSeenMs = juce::jmin (h.firstSeenMs, now);
+        // Refresh the text at most once a second, keeping the worst value seen and the severity.
+        const bool worse = is.worstDb > h.issue.worstDb + 1.0f || (is.severe && ! h.issue.severe);
+        if (worse || now - h.textMs >= textEveryMs || comingBack)
+        {
+            // The worst value of the last 10 s: a new worst, or a fresh start every 10 s.
+            const bool restart = comingBack || now - h.worstMs >= holdMs;
+            const bool severe = restart ? is.severe : (h.issue.severe || is.severe);
+            if (restart || is.worstDb >= h.issue.worstDb)
+            {
+                if (restart || is.worstDb > h.issue.worstDb)
+                    h.worstMs = now;
+                h.issue = is;
+            }
+            h.issue.severe = severe;
+            h.textMs = now;
+        }
+    }
+
+    std::vector<std::pair<std::uint64_t, HubIssue>> shown;
+    for (auto it = held.begin(); it != held.end();)
+    {
+        auto& h = it->second;
+        const bool trackAlive = std::any_of (tracks.begin(), tracks.end(), [&] (const HubTrack& t) { return t.id == h.issue.trackId; });
+        if (now - h.lastSeenMs > holdMs || ! trackAlive)
+        {
+            it = held.erase (it);
+            continue;
+        }
+        auto is = h.issue;
+        is.ageSeconds = now - h.lastSeenMs > 500 ? (int) ((now - h.lastSeenMs + 500) / 1000) : 0;
+        is.trackIndex = -1;
+        for (size_t i = 0; i < tracks.size(); ++i)
+            if (tracks[i].id == is.trackId)
+                is.trackIndex = (int) i;
+        shown.push_back ({ h.firstSeenMs, is });
+        ++it;
+    }
+    // Red first, then in the order they appeared: the list does not jump around.
+    std::stable_sort (shown.begin(), shown.end(), [] (const auto& a, const auto& b) {
+        if (a.second.severe != b.second.severe)
+            return a.second.severe;
+        return a.first < b.first;
+    });
+    std::vector<HubIssue> out;
+    for (auto& s : shown)
+        out.push_back (std::move (s.second));
     return out;
 }
 
@@ -907,11 +984,12 @@ void HubEditor::timerCallback()
     }
 
     tracks = list;
+    shownIssues = holdIssues (diagnose (list));
     rebuildRows();
     if (remote.isVisible())
         remote.update (list);
     canvas.setData (list);
-    issues.setIssues (diagnose (list));
+    issues.setIssues (shownIssues);
 
     const bool a = processor.state().getRawParameterValue (hubParams::compareA)->load() > 0.5f;
     compareA.setToggleState (a, juce::dontSendNotification);
@@ -932,11 +1010,12 @@ void HubEditor::rebuildRows()
 {
     // Display order: tracks with a real problem first (they need attention), then by name.
     // Rows are kept per track id, so a row being dragged is never recreated.
-    const auto list = diagnose (tracks);
     std::vector<bool> problem (tracks.size(), false);
-    for (const auto& is : list)
-        if (is.trackIndex >= 0 && is.severe)
-            problem[(size_t) is.trackIndex] = true;
+    for (const auto& is : shownIssues)
+        if (is.severe)
+            for (size_t i = 0; i < tracks.size(); ++i)
+                if (tracks[i].id == is.trackId)
+                    problem[i] = true;
 
     std::vector<size_t> order (tracks.size());
     for (size_t i = 0; i < order.size(); ++i)

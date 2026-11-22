@@ -7,6 +7,7 @@
 #include "../common/BandViews.h"
 #include "../common/LookAndFeel.h"
 
+#include <map>
 #include <vector>
 
 namespace ff
@@ -24,6 +25,10 @@ struct HubTrack
 /** A rule-based diagnosis item (the AI assistant comes in a later stage). */
 struct HubIssue
 {
+    std::uint64_t trackId = 0;
+    juce::String key;              // stable identity: track + kind of problem
+    int ageSeconds = 0;            // 0 = happening now; else how long ago it was last seen
+    float worstDb = 0.0f;          // for holding the worst value
     int trackIndex = -1;
     int bandFrom = 0, bandTo = -1;
     bool severe = false;
@@ -65,7 +70,7 @@ public:
 private:
     std::vector<HubIssue> issues;
     std::vector<juce::Rectangle<int>> itemBounds;
-    int selected = -1;
+    juce::String selectedKey;
 };
 
 /** One track in the Hub's list: trim (0-150 %) and bypass for that track.
@@ -147,6 +152,17 @@ private:
     void timerCallback() override;
     void setView (HubCanvas::View);
     std::vector<HubIssue> diagnose (const std::vector<HubTrack>&) const;
+
+    /** Problems are held for a while after they stop, with their worst values and a text that
+        changes at most once a second, so they can be read; the list keeps its order. */
+    std::vector<HubIssue> holdIssues (std::vector<HubIssue> current);
+    struct Held
+    {
+        HubIssue issue;
+        std::uint64_t firstSeenMs = 0, lastSeenMs = 0, textMs = 0, worstMs = 0;
+    };
+    std::map<juce::String, Held> held;
+    std::vector<HubIssue> shownIssues;   // what the panel and the row order use
 
     HubProcessor& processor;
     LookAndFeel lnf;
