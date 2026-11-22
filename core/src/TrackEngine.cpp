@@ -9,13 +9,17 @@
 namespace ff
 {
 
-void TrackEngine::prepare (double sampleRate, int /*maxBlockSize*/)
+void TrackEngine::prepare (double sampleRate, int maxBlockSize)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
     analyzer.prepare (rate);
     smoother.prepare (analyzer.frameRateHz());
     paramCoeff = (float) std::exp (-1.0 / (0.060 * analyzer.frameRateHz()));   // ~60 ms knob smoothing
-    stereo.prepare (rate);
+    for (int f = 0; f < kNumFocus; ++f)
+        chains[(size_t) f].prepare (rate, (Focus) f);
+    fadeLength = std::max (1, (int) std::lround (0.050 * rate));
+    fadeLeft.assign ((size_t) std::max (64, maxBlockSize), 0.0f);
+    fadeRight.assign (fadeLeft.size(), 0.0f);
 
     gainCoeff = (float) std::exp (-1.0 / (0.15 * rate));   // ~150 ms output-gain glide
     lookahead = (int) std::lround (kLookaheadSeconds * rate);
@@ -28,11 +32,17 @@ void TrackEngine::reset() noexcept
 {
     analyzer.reset();
     smoother.reset();
-    stereo.reset();
+    for (auto& c : chains)
+        c.reset();
+    fadeFrom = -1;
+    fadePos = 0;
     currentBudget = {};
-    eqGains.fill (0.0f);
-    spaceGains.fill (0.0f);
-    transferWeights.fill (0.0f);
+    for (int f = 0; f < kNumFocus; ++f)
+    {
+        eqGains[(size_t) f].fill (0.0f);
+        spaceGains[(size_t) f].fill (0.0f);
+        transferWeights[(size_t) f].fill (0.0f);
+    }
     std::fill (delayLeft.begin(), delayLeft.end(), 0.0f);
     std::fill (delayRight.begin(), delayRight.end(), 0.0f);
     delayPos = 0;
@@ -75,8 +85,40 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
     bs.bassMonoHz = p.bassMonoHz;
     currentBudget = splitBudget (smoothed, bs);
 
+    // Focus: switch to another filter chain with a short cross-fade (one switch at a time).
+    const int wanted = std::clamp ((int) p.focus, 0, kNumFocus - 1);
+    if (wanted != active && fadeFrom < 0)
+    {
+        fadeFrom = active;
+        active = wanted;
+        fadePos = 0;
+        auto& next = chains[(size_t) active];
+        next.reset();
+        eqGains[(size_t) active].fill (0.0f);
+        spaceGains[(size_t) active].fill (0.0f);
+        transferWeights[(size_t) active].fill (0.0f);
+        fitBells (active, p, 4);   // converge from scratch before it is heard (the fade hides the rest)
+        next.setListen (p.listen);
+        next.snapToTargets();
+    }
+    else
+    {
+        fitBells (active, p, 1);
+    }
+
+    updateCompensation (p);
+    for (auto& c : chains)
+        c.setListen (p.listen);
+}
+
+void TrackEngine::fitBells (int chain, const TrackParams& p, int passes) noexcept
+{
     // Range and Bass Mono are hard limits: bells outside are off, and the fit is weighted so
     // that a bell near a limit cuts less instead of leaking its skirt across it.
+    auto& stereo = chains[(size_t) chain];
+    auto& eq = eqGains[(size_t) chain];
+    auto& space = spaceGains[(size_t) chain];
+    auto& transfer = transferWeights[(size_t) chain];
     const auto& bank = stereo.bank();
     const float spaceLowHz = std::max (p.bassMonoHz, p.rangeLowHz);
     const auto eqWeights = BellBank::rangeWeights (p.rangeLowHz, p.rangeHighHz);
@@ -84,11 +126,12 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
     const auto eqAllowed = bank.bellsWithin (p.rangeLowHz * 1.1f, p.rangeHighHz / 1.1f);
     const auto spaceAllowed = bank.bellsWithin (spaceLowHz * 1.25f, p.rangeHighHz / 1.1f);
 
-    bank.fit (currentBudget.eq, eqWeights, eqAllowed, p.eqDepthDb, eqGains);
-    bank.fit (currentBudget.space, spaceWeights, spaceAllowed, p.monoSafetyDb, spaceGains);
-    bank.fitTransfer (spaceGains, transferWeights);
-
-    updateCompensation (p);
+    for (int i = 0; i < passes; ++i)
+    {
+        bank.fit (currentBudget.eq, eqWeights, eqAllowed, p.eqDepthDb, eq);
+        bank.fit (currentBudget.space, spaceWeights, spaceAllowed, p.monoSafetyDb, space);
+        bank.fitTransfer (space, transfer);
+    }
 
     if (p.bypass)
     {
@@ -97,7 +140,46 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
     }
     else
     {
-        stereo.setTargets (eqGains, spaceGains, transferWeights, p.spaceMode, p.panSign);
+        stereo.setTargets (eq, space, transfer, p.spaceMode, p.panSign);
+    }
+}
+
+void TrackEngine::processChains (float* left, float* right, int numSamples) noexcept
+{
+    if (fadeFrom < 0)
+    {
+        chains[(size_t) active].process (left, right, numSamples);
+        return;
+    }
+
+    // Cross-fade: the old chain (frozen at its last targets) fades out, the new one fades in.
+    // The two outputs are nearly identical, so an equal-gain raised-cosine fade keeps the level.
+    const int chunk = (int) fadeLeft.size();
+    for (int start = 0; start < numSamples; start += chunk)
+    {
+        const int n = std::min (chunk, numSamples - start);
+        float* l = left + start;
+        float* r = right + start;
+        if (fadeFrom < 0)
+        {
+            chains[(size_t) active].process (l, r, n);
+            continue;
+        }
+        std::copy (l, l + n, fadeLeft.begin());
+        std::copy (r, r + n, fadeRight.begin());
+        chains[(size_t) fadeFrom].process (fadeLeft.data(), fadeRight.data(), n);
+        chains[(size_t) active].process (l, r, n);
+        for (int i = 0; i < n; ++i)
+        {
+            const float t = std::min (1.0f, (float) fadePos / (float) fadeLength);
+            const float g = 0.5f - 0.5f * std::cos (3.14159265f * t);
+            l[i] = g * l[i] + (1.0f - g) * fadeLeft[(size_t) i];
+            r[i] = g * r[i] + (1.0f - g) * fadeRight[(size_t) i];
+            if (fadePos < fadeLength)
+                ++fadePos;
+        }
+        if (fadePos >= fadeLength)
+            fadeFrom = -1;
     }
 }
 
@@ -160,7 +242,8 @@ void TrackEngine::updateCompensation (const TrackParams& p) noexcept
     else
         compTargetDb = 0.0f;
 
-    outputGainTarget = dbToGain (compTargetDb + std::clamp (p.outputDb, -12.0f, 12.0f));
+    outputGainTarget = p.listen != Listen::normal ? 1.0f
+                                                  : dbToGain (compTargetDb + std::clamp (p.outputDb, -12.0f, 12.0f));
 }
 
 void TrackEngine::process (float* left, float* right, int numSamples,
@@ -181,9 +264,10 @@ void TrackEngine::process (float* left, float* right, int numSamples,
         delayPos = readPos;
     }
 
-    stereo.process (left, right, numSamples);
+    processChains (left, right, numSamples);
 
     // Output gain: manual trim plus compensation, glided so it never clicks.
+    // Delta and input monitoring are heard without it, as they are.
     for (int i = 0; i < numSamples; ++i)
     {
         outputGain = outputGainTarget + gainCoeff * (outputGain - outputGainTarget);

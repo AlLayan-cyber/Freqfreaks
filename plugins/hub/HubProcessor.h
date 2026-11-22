@@ -82,6 +82,7 @@ private:
     std::uint64_t id = SharedBus::makeInstanceId();
     std::atomic<bool> duplicate { false };
     std::atomic<float> mono { 1.0f };
+    std::atomic<float> editorScale { 0.0f };   // window size (0 = default), stored with the session
     float midPower = 0.0f, sidePower = 0.0f, meterCoeff = 0.9f;
 
     mutable juce::SpinLock trimLock;

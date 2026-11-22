@@ -120,15 +120,20 @@ private:
     int mode = 0;
 };
 
-class HubEditor : public juce::AudioProcessorEditor,
+/** The Hub window, drawn at a fixed base size; ScalingEditor scales it as a whole. */
+class HubEditor : public juce::Component,
                   private juce::Timer
 {
 public:
+    static constexpr int kWidth = 1280;
+    static constexpr int kHeight = 800;
+
     explicit HubEditor (HubProcessor&);
     ~HubEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
 
     /** Opens the remote panel for a track (as a double-click on its row does). */
     void openRemote (std::uint64_t trackId);

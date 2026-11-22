@@ -28,7 +28,7 @@ TimingKnob::TimingKnob (TrackProcessor& p) : processor (p)
     release.value  = s.getParameter (trackParams::release);
     release.manual = s.getParameter (trackParams::releaseManual);
 
-    setTooltip (theme::u8 ("Внутри — Release, ободок — Attack. По умолчанию «авто»: следуют ползунку Скорость. "
+    setTooltip (theme::u8 ("Атака / Релиз\nВнутри — Release, ободок — Attack. По умолчанию «авто»: следуют ползунку Скорость. "
                            "Потяни — станет ручным. Двойной клик — обратно в авто."));
     setRepaintsOnMouseActivity (true);
 }

@@ -287,7 +287,7 @@ void SpectrumView::paintWave (juce::Graphics& g, juce::Rectangle<float> plot)
         g.setColour (theme::gridLine);
         g.drawHorizontalLine ((int) y, plot.getRight() - 6.0f, plot.getRight());
         g.setColour (theme::textDim);
-        g.drawText (db == 0 ? juce::String ("0") : juce::String::fromUTF8 ("\u2212") + juce::String (db),
+        g.drawText (db == 0 ? juce::String ("0") : juce::String::fromUTF8 ("\xe2\x88\x92") + juce::String (db),
                     juce::Rectangle<float> (plot.getRight() + 4.0f, db == 0 ? y : y - 7.0f, 30.0f, 14.0f), juce::Justification::centredLeft);
     }
 
@@ -302,8 +302,9 @@ void SpectrumView::paintWave (juce::Graphics& g, juce::Rectangle<float> plot)
         g.setColour (theme::text.withAlpha (0.35f));
         g.drawVerticalLine ((int) hoverX, plot.getY(), plot.getBottom());
 
-        const auto text = shortHz (hz) + juce::String::fromUTF8 (" Hz  \u00b7  Space \u2212") + juce::String (s, 1)
-                          + juce::String::fromUTF8 ("  \u00b7  EQ \u2212") + juce::String (e, 1) + " dB";
+        // Minus sign and middle dot spelled as UTF-8 bytes: the same on every compiler.
+        const auto text = shortHz (hz) + juce::String::fromUTF8 (" Hz  \xc2\xb7  Space \xe2\x88\x92") + juce::String (s, 1)
+                          + juce::String::fromUTF8 ("  \xc2\xb7  EQ \xe2\x88\x92") + juce::String (e, 1) + " dB";
         const float w = 250.0f;
         auto box = juce::Rectangle<float> (juce::jmin (hoverX + 8.0f, plot.getRight() - w), yFor (s + e) + 8.0f, w, 22.0f);
         g.setColour (theme::raised.withAlpha (0.95f));

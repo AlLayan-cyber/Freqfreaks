@@ -36,7 +36,8 @@ if (FREQFREAKS_BUILD_PLUGINS)
         ${PROJECT_SOURCE_DIR}/plugins/hub/HubProcessor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/hub/HubEditor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/common/BandViews.cpp
-        ${PROJECT_SOURCE_DIR}/plugins/common/LookAndFeel.cpp)
+        ${PROJECT_SOURCE_DIR}/plugins/common/LookAndFeel.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/common/ScalingEditor.cpp)
     target_include_directories (freqfreaks_snapshot PRIVATE ${PROJECT_SOURCE_DIR}/plugins)
     target_compile_definitions (freqfreaks_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries (freqfreaks_snapshot PRIVATE

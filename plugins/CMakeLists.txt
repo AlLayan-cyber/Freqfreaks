@@ -10,7 +10,8 @@ endif()
 
 set (FREQFREAKS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/common/BandViews.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/common/LookAndFeel.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/common/LookAndFeel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/common/ScalingEditor.cpp)
 
 function (freqfreaks_configure target)
     target_compile_definitions (${target} PUBLIC

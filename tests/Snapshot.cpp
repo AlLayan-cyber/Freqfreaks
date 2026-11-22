@@ -11,6 +11,7 @@
 #include "track/TrackProcessor.h"
 #include "hub/HubEditor.h"
 #include "hub/HubProcessor.h"
+#include "common/ScalingEditor.h"
 
 #include "ff/Biquad.h"
 
@@ -101,6 +102,10 @@ int main (int argc, char** argv)
     if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::attackManual))
         p->setValueNotifyingHost (1.0f);
 
+    // Focus on the guitar, so the wave shows the narrower bells.
+    if (auto* p = guitarL.processor->state().getParameter (ff::trackParams::focus))
+        p->setValueNotifyingHost (p->convertTo0to1 (1.0f));
+
     ff::HubProcessor hub;
     hub.setPlayConfigDetails (2, 2, kRate, kBlock);
     hub.prepareToPlay (kRate, kBlock);
@@ -119,6 +124,17 @@ int main (int argc, char** argv)
     {
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (guitarL.processor->createEditor());
         ok &= save (*editor, outDir.getChildFile ("track.png"));
+
+        // The window scales as a whole: dragging the corner to 150 % keeps the layout.
+        if (auto* scaling = dynamic_cast<ff::ScalingEditor*> (editor.get()))
+        {
+            const auto before = scaling->getScale();
+            scaling->setSize (ff::TrackEditor::kWidth * 3 / 2, ff::TrackEditor::kHeight * 3 / 2);
+            ok &= std::abs (scaling->getScale() - 1.5f) < 0.01f;
+            ok &= scaling->getContent().getWidth() == ff::TrackEditor::kWidth;
+            std::printf ("scale %.2f -> %.2f\n", before, scaling->getScale());
+            scaling->setScale (before);
+        }
     }
     // Hub: guitar trimmed to 60 %, pad bypassed from the Hub.
     hub.setTrim (guitarL.processor->instanceId(), 0.6f);
@@ -134,7 +150,8 @@ int main (int argc, char** argv)
     {
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (hub.createEditor());
         ok &= save (*editor, outDir.getChildFile ("hub-map.png"));
-        if (auto* hubEditor = dynamic_cast<ff::HubEditor*> (editor.get()))
+        auto* scaling = dynamic_cast<ff::ScalingEditor*> (editor.get());
+        if (auto* hubEditor = scaling != nullptr ? dynamic_cast<ff::HubEditor*> (&scaling->getContent()) : nullptr)
         {
             hubEditor->openRemote (guitarL.processor->instanceId());
             ok &= save (*editor, outDir.getChildFile ("hub-panel.png"));

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FreqFreaks contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "HubEditor.h"
+#include "../common/ScalingEditor.h"
 
 #include <map>
 
@@ -12,8 +13,6 @@ using theme::u8;
 
 namespace
 {
-    constexpr int kWidth = 1280;
-    constexpr int kHeight = 800;
     constexpr int groupCompare = 2001, groupTabs = 2002;
 
     juce::String hzText (float hz)
@@ -612,7 +611,7 @@ void RemotePanel::resized()
 
 //==============================================================================
 HubEditor::HubEditor (HubProcessor& p)
-    : AudioProcessorEditor (p), processor (p), remote (p)
+    : processor (p), remote (p)
 {
     setLookAndFeel (&lnf);
 
@@ -690,6 +689,13 @@ HubEditor::~HubEditor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+void HubEditor::mouseDown (const juce::MouseEvent& e)
+{
+    // Logo: the window size menu.
+    if (juce::Rectangle<int> (14, 14, 190, 40).contains (e.getPosition()))
+        ScalingEditor::showMenuFor (*this);
 }
 
 void HubEditor::setView (HubCanvas::View v)

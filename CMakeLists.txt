@@ -11,6 +11,12 @@ set (CMAKE_CXX_STANDARD_REQUIRED ON)
 # Plug-ins must not depend on the VC++ redistributable being installed.
 set (CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Sources are UTF-8. Without this MSVC turns non-ASCII escapes such as the minus sign
+# into "?" (the dB scale showed "?3 ?6 ?12" on Windows).
+if (MSVC)
+    add_compile_options (/utf-8)
+endif()
+
 option (FREQFREAKS_BUILD_PLUGINS "Build the Track and Hub plug-ins (needs JUCE)" ON)
 option (FREQFREAKS_BUILD_TESTS "Build unit and integration tests" ON)
 set (FREQFREAKS_JUCE_PATH "" CACHE PATH "Path to a local JUCE 8 checkout (fetched from GitHub when empty)")

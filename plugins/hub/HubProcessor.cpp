@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "HubProcessor.h"
 #include "HubEditor.h"
+#include "../common/ScalingEditor.h"
 
 namespace ff
 {
@@ -134,8 +135,9 @@ void HubProcessor::resetTrims()
 
 void HubProcessor::timerCallback()
 {
-    if (duplicate.load())
-        duplicate = ! bus.claimHub (id);   // take over if the other Hub went away
+    // Holds the bus, or takes it back: a second Hub instance (a DAW preview, a copy) may have
+    // taken it while this one stalled, and released it when it went away.
+    duplicate = ! bus.ensureHub (id);
 
     // Published here (host idle) and from the audio thread (offline render can starve this timer).
     bus.publishHub (currentHubData());
@@ -198,6 +200,7 @@ void HubProcessor::getStateInformation (juce::MemoryBlock& destData)
         }
     }
     tree.removeChild (tree.getChildWithName ("Trims"), nullptr);
+    tree.setProperty ("uiScale", editorScale.load(), nullptr);
     tree.appendChild (list, nullptr);
 
     if (auto xml = tree.createXml())
@@ -213,6 +216,7 @@ void HubProcessor::setStateInformation (const void* data, int sizeInBytes)
     auto tree = juce::ValueTree::fromXml (*xml);
     const auto list = tree.getChildWithName ("Trims");
     tree.removeChild (list, nullptr);
+    editorScale = (float) tree.getProperty ("uiScale", 0.0f);
     parameters.replaceState (tree);
 
     const juce::SpinLock::ScopedLockType lock (trimLock);
@@ -231,7 +235,8 @@ void HubProcessor::setStateInformation (const void* data, int sizeInBytes)
 
 juce::AudioProcessorEditor* HubProcessor::createEditor()
 {
-    return new HubEditor (*this);
+    return new ScalingEditor (*this, std::make_unique<HubEditor> (*this), HubEditor::kWidth, HubEditor::kHeight,
+                              "hubScale", editorScale.load(), [this] (float s) { editorScale = s; });
 }
 
 } // namespace ff

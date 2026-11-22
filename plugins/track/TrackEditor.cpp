@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FreqFreaks contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "TrackEditor.h"
+#include "../common/ScalingEditor.h"
 
 namespace ff
 {
@@ -10,9 +11,24 @@ using theme::u8;
 
 namespace
 {
-    constexpr int kWidth = 1120;
-    constexpr int kHeight = 760;
-    constexpr int groupCompare = 1001, groupLevel = 1002, groupMode = 1003, groupSide = 1004;
+    constexpr int groupCompare = 1001, groupLevel = 1002, groupMode = 1003, groupSide = 1004, groupFocus = 1005;
+    const juce::Rectangle<int> logoArea { 14, 12, 196, 40 };
+
+    struct NamedColour { const char* name; juce::uint32 argb; };
+    const NamedColour palette[] = {
+        { "Красный", 0xffef4444 }, { "Оранжевый", 0xfffb923c }, { "Жёлтый", 0xfffde047 }, { "Лайм", 0xffa3e635 },
+        { "Зелёный", 0xff34d399 }, { "Бирюзовый", 0xff2dd4bf }, { "Голубой", 0xff38bdf8 }, { "Синий", 0xff60a5fa },
+        { "Фиолетовый", 0xffa78bfa }, { "Сиреневый", 0xffc4b5fd }, { "Розовый", 0xfff472b6 }, { "Серый", 0xff94a3b8 } };
+
+    const char* listenNames[] = { "Обычный звук", "Δ всё — слышно только то, что убрано",
+                                  "Δ только EQ", "Δ только Space", "Вход без обработки" };
+    const char* listenShort[] = { "", "Δ", "Δ EQ", "Δ Sp", "IN" };
+
+    /** "Title\nBody" tooltips feed the description block. */
+    juce::String help (const char* title, const char* body)
+    {
+        return theme::u8 (title) + "\n" + theme::u8 (body);
+    }
 
     void drawLogo (juce::Graphics& g, juce::Point<float> at)
     {
@@ -27,11 +43,176 @@ namespace
     }
 }
 
+//==============================================================================
+ListenButton::ListenButton (TrackProcessor& p) : processor (p)
+{
+    setTooltip (help ("Прослушка (Delta)",
+                      "Клик — слышно только то, что плагин убрал из трека. Ещё клик — обычный звук. "
+                      "Правый клик — выбрать: Δ всё / только EQ / только Space / вход без обработки."));
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void ListenButton::paint (juce::Graphics& g)
+{
+    const int mode = processor.listenMode();
+    const auto accent = mode == 0 ? theme::textDim : (mode == 4 ? theme::space : theme::eq);
+    auto r = getLocalBounds().toFloat();
+
+    if (mode != 0)
+    {
+        g.setColour (accent.withAlpha (0.16f));
+        g.fillRoundedRectangle (r.reduced (0.5f), 6.0f);
+        g.setColour (accent.withAlpha (0.7f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+    }
+    else if (isMouseOver())
+    {
+        g.setColour (theme::raised);
+        g.fillRoundedRectangle (r.reduced (0.5f), 6.0f);
+    }
+
+    // Speaker: body, cone and two waves.
+    const float cx = 8.0f, cy = r.getCentreY();
+    juce::Path speaker;
+    speaker.startNewSubPath (cx - 3.0f, cy - 3.0f);
+    speaker.lineTo (cx, cy - 3.0f);
+    speaker.lineTo (cx + 5.0f, cy - 7.0f);
+    speaker.lineTo (cx + 5.0f, cy + 7.0f);
+    speaker.lineTo (cx, cy + 3.0f);
+    speaker.lineTo (cx - 3.0f, cy + 3.0f);
+    speaker.closeSubPath();
+    g.setColour (accent);
+    g.fillPath (speaker);
+    for (int i = 0; i < 2; ++i)
+    {
+        juce::Path wave;
+        const float rad = 4.0f + 4.0f * (float) i;
+        wave.addCentredArc (cx + 6.0f, cy, rad, rad, 0.0f, 0.75f, 2.39f, true);
+        g.strokePath (wave, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    if (mode != 0)
+    {
+        g.setFont (theme::font (10.5f, true));
+        g.drawText (theme::u8 (listenShort[mode]), r.withTrimmedLeft (22.0f).withTrimmedRight (2.0f), juce::Justification::centred);
+    }
+}
+
+void ListenButton::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        showMenu();
+        return;
+    }
+    const int mode = processor.listenMode();
+    if (mode == 0)
+    {
+        processor.setListenMode (lastDelta);
+    }
+    else
+    {
+        lastDelta = mode;
+        processor.setListenMode (0);
+    }
+    repaint();
+}
+
+void ListenButton::showMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader (theme::u8 ("Что слушать"));
+    const int mode = processor.listenMode();
+    for (int i = 0; i < 5; ++i)
+    {
+        if (i == 1 || i == 4)
+            menu.addSeparator();
+        menu.addItem (theme::u8 (listenNames[i]), true, mode == i,
+                      [safe = juce::Component::SafePointer<ListenButton> (this), i] {
+                          if (safe == nullptr)
+                              return;
+                          if (i != 0)
+                              safe->lastDelta = i;
+                          safe->processor.setListenMode (i);
+                          safe->repaint();
+                      });
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this));
+}
+
+//==============================================================================
+ColourDot::ColourDot (TrackProcessor& p) : processor (p)
+{
+    setTooltip (help ("Цвет трека", "Берётся из DAW. Клик — выбрать свой цвет или вернуть цвет из DAW. "
+                                    "Этот цвет у линии референса на других треках и в Hub."));
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void ColourDot::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().withSizeKeepingCentre (12.0f, 12.0f);
+    g.setColour (processor.trackColour());
+    g.fillEllipse (r);
+    if (isMouseOver())
+    {
+        g.setColour (theme::text.withAlpha (0.8f));
+        g.drawEllipse (r.expanded (2.0f), 1.0f);
+    }
+}
+
+void ColourDot::mouseDown (const juce::MouseEvent&)
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader (theme::u8 ("Цвет трека"));
+    const bool manual = processor.hasManualColour();
+    const auto info = processor.hostInfo();
+    auto safe = juce::Component::SafePointer<ColourDot> (this);
+    menu.addItem (info.colourArgb != 0 ? theme::u8 ("Цвет из DAW") : theme::u8 ("Цвет из DAW (DAW его не передаёт)"),
+                  true, ! manual, [safe] { if (safe != nullptr) { safe->processor.setManualColour ({}); safe->repaint(); } });
+    menu.addSeparator();
+    const auto current = processor.trackColour().getARGB();
+    for (const auto& c : palette)
+    {
+        juce::PopupMenu::Item item (theme::u8 (c.name));
+        item.colour = juce::Colour (c.argb);
+        item.isTicked = manual && current == c.argb;
+        const auto argb = c.argb;
+        item.action = [safe, argb] { if (safe != nullptr) { safe->processor.setManualColour (juce::Colour (argb)); safe->repaint(); } };
+        menu.addItem (item);
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this));
+}
+
+//==============================================================================
 TrackEditor::TrackEditor (TrackProcessor& p)
-    : AudioProcessorEditor (p), processor (p), timing (p)
+    : processor (p), colourDot (p), listenButton (p), timing (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = processor.state();
+
+    addAndMakeVisible (colourDot);
+    addAndMakeVisible (listenButton);
+
+    trackLabel.setEditable (true, false, false);
+    trackLabel.setTooltip (help ("Имя трека", "Берётся из DAW и меняется вместе с ним. Клик — задать своё имя "
+                                              "(оно главнее). Сотри его — снова будет имя из DAW."));
+    trackLabel.setColour (juce::Label::textWhenEditingColourId, theme::text);
+    trackLabel.setColour (juce::Label::backgroundWhenEditingColourId, theme::panelDeep);
+    trackLabel.setColour (juce::Label::outlineWhenEditingColourId, theme::space);
+    trackLabel.onEditorShow = [this] {
+        if (auto* ed = trackLabel.getCurrentTextEditor())
+        {
+            ed->setText (processor.trackName(), false);
+            ed->selectAll();
+        }
+    };
+    trackLabel.onTextChange = [this] {
+        const auto typed = trackLabel.getText().trim();
+        const auto daw = processor.hostInfo().name;
+        // Typing the DAW's own name back means "follow the DAW again".
+        processor.setManualName (typed == daw ? juce::String() : typed);
+        trackLabel.setText (processor.trackName(), juce::dontSendNotification);
+    };
 
     trackLabel.setFont (theme::font (15.0f, true));
     yieldsLabel.setText (u8 ("Уступает:"), juce::dontSendNotification);
@@ -42,7 +223,8 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     addAndMakeVisible (yieldsLabel);
 
     referenceBox.setTextWhenNothingSelected (u8 ("Выбрать трек…"));
-    referenceBox.setTooltip (u8 ("Трек, которому этот трек уступает частоты"));
+    referenceBox.setTooltip (help ("Уступает (референс)", "Трек, которому этот трек освобождает частоты. "
+                                                          "Его спектр — пунктир в цвет его дорожки."));
     referenceBox.onChange = [this] {
         const int index = referenceBox.getSelectedItemIndex();
         if (index >= 0 && index < (int) referenceIds.size())
@@ -56,6 +238,8 @@ TrackEditor::TrackEditor (TrackProcessor& p)
         styleSegment (*b, groupCompare);
         addAndMakeVisible (*b);
     }
+    compareA.setTooltip (help ("A / B", "A — трек без обработки (с той же задержкой), B — с обработкой."));
+    compareB.setTooltip (compareA.getTooltip());
     compareA.onClick = [this] { if (auto* prm = processor.state().getParameter (trackParams::bypass)) prm->setValueNotifyingHost (1.0f); };
     compareB.onClick = [this] { if (auto* prm = processor.state().getParameter (trackParams::bypass)) prm->setValueNotifyingHost (0.0f); };
 
@@ -67,6 +251,22 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     levelSimple.onClick = [this] { applyLevel (0); };
     levelDetail.onClick = [this] { applyLevel (1); };
     levelExpert.onClick = [this] { applyLevel (2); };
+    levelSimple.setTooltip (help ("Simple", "Только главное: Amount, Space Amount и бюджет освобождения."));
+    levelDetail.setTooltip (help ("Detail", "Плюс спектр с волной подавления, Атака/Релиз и Focus."));
+    levelExpert.setTooltip (help ("Expert", "Все настройки: EQ Depth, Range, Bass Mono, Mono Safety, Чувствительность."));
+
+    styleChip (focusSmooth, theme::text, groupFocus);
+    styleChip (focusFocus, theme::text, groupFocus);
+    styleChip (focusSharp, theme::text, groupFocus);
+    focusSmooth.onClick = [this] { setChoice (trackParams::focus, 0); };
+    focusFocus.onClick  = [this] { setChoice (trackParams::focus, 1); };
+    focusSharp.onClick  = [this] { setChoice (trackParams::focus, 2); };
+    focusSmooth.setTooltip (help ("Focus: Smooth", "16 широких полос (~0,8 октавы). Музыкально и незаметно — как раньше."));
+    focusFocus.setTooltip (help ("Focus: Focus", "24 полосы (~0,5 октавы). Точнее: тембр вне конфликта почти не трогается."));
+    focusSharp.setTooltip (help ("Focus: Sharp", "32 узкие полосы (~1/3 октавы). Хирургически, только конфликтные места. "
+                                                 "Может звучать резче."));
+    for (auto* b : { &focusSmooth, &focusFocus, &focusSharp })
+        addAndMakeVisible (*b);
 
     addAndMakeVisible (spectrum);
     addAndMakeVisible (timing);   // over the spectrum
@@ -81,8 +281,9 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     }
     amountKnob.setColour (juce::Slider::rotarySliderFillColourId, theme::text);
     spaceKnob.setColour (juce::Slider::rotarySliderFillColourId, theme::space);
-    amountKnob.setTooltip (u8 ("Сколько освобождать всего"));
-    spaceKnob.setTooltip (u8 ("Какую часть берёт Space. 100% = выбор плагина"));
+    amountKnob.setTooltip (help ("Amount", "Сколько места освобождать для референса всего. Двойной клик — 70%."));
+    spaceKnob.setTooltip (help ("Space Amount", "Какую часть берёт Space (уводит в стороны, не теряя энергию). "
+                                                "100% — выбор плагина, меньше — больше работает EQ."));
     amountAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::amount, amountKnob);
     spaceAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::space, spaceKnob);
     spaceKnob.setDoubleClickReturnValue (true, 100.0);
@@ -92,12 +293,14 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     linkButton.setColour (juce::TextButton::buttonOnColourId, theme::space.withAlpha (0.14f));
     linkButton.setColour (juce::TextButton::textColourOnId, theme::space);
     linkButton.setColour (juce::ComboBox::outlineColourId, theme::borderLight);
-    linkButton.setTooltip (u8 ("Link: EQ добирает то, что не сделал Space"));
+    linkButton.setTooltip (help ("Link", "EQ добирает то, что не успел Space. Выкл — Space и EQ работают независимо."));
     linkAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, trackParams::link, linkButton);
     addAndMakeVisible (linkButton);
 
     speedSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     speedSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    speedSlider.setTooltip (help ("Скорость", "Rider — плавно, по фразам. Duck — быстро, по нотам. "
+                                              "Атака и релиз в режиме «авто» следуют за ней."));
     speedAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::speed, speedSlider);
     addAndMakeVisible (speedSlider);
 
@@ -107,9 +310,9 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     modeSpread.onClick = [this] { setChoice (trackParams::spaceMode, 0); };
     modePan.onClick    = [this] { setChoice (trackParams::spaceMode, 1); };
     modeDecor.onClick  = [this] { setChoice (trackParams::spaceMode, 2); };
-    modeSpread.setTooltip (u8 ("Уводит энергию полосы из центра в стороны"));
-    modePan.setTooltip (u8 ("Сдвигает полосу влево или вправо"));
-    modeDecor.setTooltip (u8 ("Расширяет моно-источник фазовыми фильтрами"));
+    modeSpread.setTooltip (help ("Режим Space: Spread", "Уводит энергию полосы из центра в стороны."));
+    modePan.setTooltip (help ("Режим Space: Pan Away", "Сдвигает полосу влево или вправо от референса."));
+    modeDecor.setTooltip (help ("Режим Space: Decorrelate", "Расширяет моно-источник фазовыми фильтрами."));
 
     styleChip (sideAuto, theme::space, groupSide);
     styleChip (sideLeft, theme::space, groupSide);
@@ -118,6 +321,8 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     sideLeft.onClick  = [this] { setChoice (trackParams::panSide, 1); };
     sideRight.onClick = [this] { setChoice (trackParams::panSide, 2); };
 
+    for (auto* b : { &sideAuto, &sideLeft, &sideRight })
+        b->setTooltip (help ("Сторона для Pan Away", "Куда сдвигать полосы в режиме Pan Away. Auto — по треку."));
     for (auto* b : { &modeSpread, &modePan, &modeDecor, &sideAuto, &sideLeft, &sideRight })
         addAndMakeVisible (*b);
 
@@ -126,7 +331,7 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     outputSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 20);
     outputSlider.setColour (juce::Slider::trackColourId, theme::text);
     outputSlider.setDoubleClickReturnValue (true, 0.0);
-    outputSlider.setTooltip (u8 ("Ручная поправка громкости на выходе"));
+    outputSlider.setTooltip (help ("Output", "Ручная поправка громкости на выходе, ±12 дБ. Двойной клик — 0."));
     outputAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::output, outputSlider);
 
     for (auto* b : { &autoGainButton, &spaceCompButton })
@@ -137,9 +342,9 @@ TrackEditor::TrackEditor (TrackProcessor& p)
         b->setColour (juce::ComboBox::outlineColourId, theme::borderLight);
         addAndMakeVisible (*b);
     }
-    autoGainButton.setTooltip (u8 ("Вернуть громкость, которую трек потерял от освобождения (до +6 дБ). "
-                                   "Делает сравнение A/B честным, но немного уменьшает эффект."));
-    spaceCompButton.setTooltip (u8 ("Держать громкость постоянной, когда крутишь Space Amount"));
+    autoGainButton.setTooltip (help ("Auto", "Вернуть громкость, которую трек потерял от освобождения (до +6 дБ). "
+                                             "Сравнение A/B честнее, но эффект чуть меньше."));
+    spaceCompButton.setTooltip (help ("Space comp", "Держать громкость постоянной, когда крутишь Space Amount."));
     autoGainAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, trackParams::autoGain, autoGainButton);
     spaceCompAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, trackParams::spaceComp, spaceCompButton);
 
@@ -153,6 +358,17 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     rangeLow.slider.setColour (juce::Slider::trackColourId, theme::eq);
     rangeHigh.slider.setColour (juce::Slider::trackColourId, theme::eq);
     sensitivity.slider.setColour (juce::Slider::trackColourId, theme::textDim);
+    auto rowHelp = [] (ParamRow& row, const juce::String& text) { row.label.setTooltip (text); row.slider.setTooltip (text); };
+    rowHelp (eqDepth, help ("EQ Depth", "Самый глубокий вырез, который может сделать EQ."));
+    rowHelp (rangeLow, help ("Range от", "Ниже этой частоты плагин ничего не трогает."));
+    rowHelp (rangeHigh, help ("Range до", "Выше этой частоты плагин ничего не трогает."));
+    rowHelp (bassMono, help ("Bass Mono", "Ниже этой частоты Space не работает, низ остаётся в моно. "
+                                          "Там освобождает только EQ. Серая зона слева на спектре."));
+    rowHelp (monoSafety, help ("Mono Safety", "Сколько дБ Space может увести из центра: столько трек потеряет при сведении в моно."));
+    rowHelp (sensitivity, help ("Чувствительность", "Насколько сильно референс должен перекрывать трек, чтобы плагин начал уступать."));
+    spectrum.setTooltip (help ("Спектр", "Заливка — трек до, линия — после обработки, пунктир — референс. Сверху висит волна "
+                                         "подавления: бирюзовое — Space, янтарное — EQ, красное — не хватило."));
+    budget.setTooltip (help ("Бюджет освобождения", "Сколько освобождено в каждой полосе: Space, EQ и сколько не хватило."));
 
     setSize (kWidth, kHeight);
     applyLevel (processor.uiLevel());
@@ -206,6 +422,10 @@ void TrackEditor::syncChoiceButtons()
     sideRight.setToggleState (side == 2, juce::dontSendNotification);
     for (auto* b : { &sideAuto, &sideLeft, &sideRight })
         b->setEnabled (mode == 1);
+    const int focus = (int) apvts.getRawParameterValue (trackParams::focus)->load();
+    focusSmooth.setToggleState (focus == 0, juce::dontSendNotification);
+    focusFocus.setToggleState (focus == 1, juce::dontSendNotification);
+    focusSharp.setToggleState (focus == 2, juce::dontSendNotification);
     compareA.setToggleState (bypassed, juce::dontSendNotification);
     compareB.setToggleState (! bypassed, juce::dontSendNotification);
 }
@@ -219,6 +439,8 @@ void TrackEditor::applyLevel (int level)
 
     spectrum.setVisible (level >= 1);
     timing.setVisible (level >= 1);
+    for (auto* b : { &focusSmooth, &focusFocus, &focusSharp })
+        b->setVisible (level >= 1);
     for (auto* row : { &eqDepth, &rangeLow, &rangeHigh, &bassMono, &monoSafety, &sensitivity })
     {
         row->label.setVisible (level == 2);
@@ -280,7 +502,6 @@ void TrackEditor::refreshReferenceList()
 
 void TrackEditor::timerCallback()
 {
-    static int tick = 0;
     if (++tick % 15 == 0)
         refreshReferenceList();
 
@@ -297,16 +518,29 @@ void TrackEditor::timerCallback()
     hubOnline = bus.readHub (hub);
 
     const auto bassHz = processor.state().getRawParameterValue (trackParams::bassMono)->load();
-    spectrum.setData (own, processor.trackColour(), haveRef ? &ref : nullptr,
-                      haveRef ? theme::trackColour (ref.colourArgb, refId) : theme::reference,
-                      haveRef ? juce::String::fromUTF8 (ref.name) : juce::String(), bassHz, &processor.bellBank());
+    if (haveRef)
+    {
+        shownRefColour = theme::trackColour (ref.colourArgb, refId);
+        shownRefName = juce::String::fromUTF8 (ref.name);
+    }
+    else if (refId == 0)
+    {
+        shownRefName = {};
+    }
+    spectrum.setData (own, processor.trackColour(), haveRef ? &ref : nullptr, shownRefColour,
+                      shownRefName, bassHz, &processor.bellBank ((int) own.focus));
     budget.setData (own);
     shownCompensationDb = own.compensationDb;
     timing.repaint();
 
-    trackLabel.setText (processor.trackName(), juce::dontSendNotification);
+    if (! trackLabel.isBeingEdited())
+        trackLabel.setText (processor.trackName(), juce::dontSendNotification);
+    colourDot.repaint();
+    listenButton.repaint();
     syncChoiceButtons();
+    updateHelp();
     repaint (header);
+    repaint (spectrumCard.withHeight (40));
     repaint (budgetCard.withHeight (34));
     repaint (knobCard);
 }
@@ -318,8 +552,10 @@ void TrackEditor::resized()
     header = r.removeFromTop (64);
 
     // Header controls.
-    trackLabel.setBounds (226, 17, 150, 30);
-    yieldsLabel.setBounds (380, 17, 76, 30);
+    colourDot.setBounds (206, 22, 20, 20);
+    trackLabel.setBounds (226, 17, 128, 30);
+    listenButton.setBounds (356, 18, 46, 28);
+    yieldsLabel.setBounds (402, 17, 56, 30);
     referenceBox.setBounds (462, 17, 210, 30);
     compareA.setBounds (838, 18, 34, 28);
     compareB.setBounds (872, 18, 34, 28);
@@ -350,6 +586,14 @@ void TrackEditor::resized()
         // Attack / Release sits in the top-left of the graph, under the Bass Mono label,
         // where the wave and the spectrum are usually quiet.
         timing.setBounds (spectrum.getX() + 10, spectrum.getY() + 26, 96, 96);
+
+        // Focus chips at the right end of the card's title row.
+        auto row = spectrumCard.reduced (16, 12).removeFromTop (22);
+        focusSharp.setBounds (row.removeFromRight (58));
+        row.removeFromRight (4);
+        focusFocus.setBounds (row.removeFromRight (54));
+        row.removeFromRight (4);
+        focusSmooth.setBounds (row.removeFromRight (62));
     }
     else
     {
@@ -382,6 +626,9 @@ void TrackEditor::resized()
     const int half = (k.getWidth() - 6) / 2;
     autoGainButton.setBounds (k.getX(), y + 48, half, 28);
     spaceCompButton.setBounds (k.getX() + half + 6, y + 48, half, 28);
+
+    // Description block under Output, to the bottom of the card.
+    helpArea = juce::Rectangle<int> (k.getX(), y + 90, k.getWidth(), juce::jmin (150, k.getBottom() - (y + 90)));
 
     // Expert drawer: three cards.
     if (! drawer.isEmpty())
@@ -425,8 +672,6 @@ void TrackEditor::paint (juce::Graphics& g)
     g.setFont (theme::font (11.0f, true));
     g.drawText ("TRACK", 154, 22, 51, 20, juce::Justification::centred);
 
-    g.setColour (processor.trackColour());
-    g.fillEllipse (212.0f, 27.0f, 10.0f, 10.0f);
 
     g.setFont (theme::font (12.0f));
     g.setColour (hubOnline ? theme::space : theme::textDim);
@@ -461,10 +706,15 @@ void TrackEditor::paint (juce::Graphics& g)
             g.setColour (theme::textDim);
             g.drawText (text, item.withTrimmedLeft (20), juce::Justification::centredLeft);
         };
-        legend (processor.trackColour(), u8 ("Mid после обработки"), false);
+        legend (processor.trackColour(), u8 ("после обработки"), false);
         legend (processor.trackColour().withAlpha (0.35f), u8 ("до"), false);
         if (processor.referenceId() != 0)
-            legend (theme::reference, referenceLost ? u8 ("референс: нет сигнала") : u8 ("референс"), true);
+            legend (shownRefColour, referenceLost ? u8 ("референс: нет сигнала")
+                                                  : u8 ("референс: ") + (shownRefName.isNotEmpty() ? shownRefName : processor.referenceName()), true);
+
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (11.5f));
+        g.drawText ("Focus", focusSmooth.getX() - 44, focusSmooth.getY(), 40, focusSmooth.getHeight(), juce::Justification::centredRight);
     }
 
     // Budget card + legend.
@@ -491,7 +741,12 @@ void TrackEditor::paint (juce::Graphics& g)
 
         juce::String status;
         juce::Colour statusColour = theme::space;
-        if (processor.isHubBypassing())
+        const int listen = processor.listenMode();
+        if (listen == 4)
+            status = u8 ("Слушаешь вход без обработки");
+        else if (listen != 0)
+            status = u8 ("Delta: слышно только убранное"), statusColour = theme::eq;
+        else if (processor.isHubBypassing())
             status = u8 ("Hub: обход — обработка выключена");
         else if (processor.referenceId() == 0)
             status = u8 ("Референс не выбран"), statusColour = theme::textDim;
@@ -539,10 +794,7 @@ void TrackEditor::paint (juce::Graphics& g)
         caption (spaceArea, "Space Amount", u8 ("100% = авто"));
 
         auto k = knobCard.reduced (18);
-        g.setFont (theme::font (11.5f));
-        g.setColour (link ? theme::space : theme::textDim);
-        g.drawText (link ? u8 ("Link вкл: EQ добирает остаток Space") : u8 ("Link выкл: Space и EQ независимы"),
-                    k.getX(), k.getY() + 160, k.getWidth(), 18, juce::Justification::centred);
+        juce::ignoreUnused (link);
 
         int y = k.getY() + 186;
         g.setColour (theme::text);
@@ -576,6 +828,8 @@ void TrackEditor::paint (juce::Graphics& g)
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
         g.drawText (compText, k.getRight() - 170, y, 170, 16, juce::Justification::centredRight);
+
+        paintHelp (g);
     }
 
     // Expert drawer.
@@ -594,8 +848,95 @@ void TrackEditor::paint (juce::Graphics& g)
         g.setFont (theme::font (12.0f));
         auto info = detectCard.reduced (14, 10).withTrimmedTop (58);
         g.drawText (u8 ("Lookahead: 30 мс (задержка сообщается DAW)"), info.removeFromTop (20), juce::Justification::centredLeft);
-        g.drawText (u8 ("Защита атак и формант — в версии v1"), info.removeFromTop (20), juce::Justification::centredLeft);
+        // What the DAW told us about the track: shows at once whether the host sends a name.
+        const auto host = processor.hostInfo();
+        if (host.calls == 0 && host.name.isEmpty())
+        {
+            g.setColour (theme::eq);
+            g.drawText (u8 ("DAW не передаёт имя трека"), info.removeFromTop (20), juce::Justification::centredLeft);
+            g.setColour (theme::textDim);
+            g.drawText (u8 ("Кликни по имени вверху, чтобы задать своё"), info.removeFromTop (20), juce::Justification::centredLeft);
+        }
+        else
+        {
+            g.drawText (u8 ("Имя от DAW: ") + (host.name.isNotEmpty() ? u8 ("«") + host.name + u8 ("»") : u8 ("не прислано")),
+                        info.removeFromTop (20), juce::Justification::centredLeft);
+            auto line = info.removeFromTop (20);
+            g.drawText (u8 ("Цвет от DAW: ") + (host.colourArgb != 0 ? juce::String() : u8 ("не прислан")),
+                        line, juce::Justification::centredLeft);
+            if (host.colourArgb != 0)
+            {
+                const float x = (float) line.getX() + juce::GlyphArrangement::getStringWidth (theme::font (12.0f), u8 ("Цвет от DAW: ")) + 2.0f;
+                g.setColour (juce::Colour (host.colourArgb));
+                g.fillEllipse (x, (float) line.getCentreY() - 5.0f, 10.0f, 10.0f);
+            }
+        }
     }
+}
+
+//==============================================================================
+void TrackEditor::mouseDown (const juce::MouseEvent& e)
+{
+    // Logo: the window size menu.
+    if (logoArea.contains (e.getPosition()))
+        ScalingEditor::showMenuFor (*this);
+}
+
+void TrackEditor::updateHelp()
+{
+    juce::String tip;
+    auto* under = juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse();
+    if (under != nullptr && (under == this || isParentOf (under)))
+    {
+        for (auto* c = under; c != nullptr && c != this; c = c->getParentComponent())
+            if (auto* client = dynamic_cast<juce::TooltipClient*> (c))
+                if ((tip = client->getTooltip()).isNotEmpty())
+                    break;
+        if (tip.isEmpty() && logoArea.contains (getMouseXYRelative()))
+            tip = help ("Размер окна", "Клик по логотипу — меню размеров 75–200%. "
+                                       "Или тяни за правый нижний угол окна.");
+    }
+
+    juce::String title, text;
+    if (tip.isNotEmpty())
+    {
+        title = tip.upToFirstOccurrenceOf ("\n", false, false);
+        text = tip.fromFirstOccurrenceOf ("\n", false, false);
+    }
+    else
+    {
+        title = u8 ("Подсказка");
+        text = u8 ("Наведи мышь на ручку — тут будет подсказка.\n"
+                   "Simple — Amount, Space Amount, бюджет.\n"
+                   "Detail — плюс спектр, волна, Атака/Релиз, Focus.\n"
+                   "Expert — все настройки: EQ, Range, Bass Mono…\n"
+                   "Link — EQ добирает то, что не успел Space.");
+    }
+    if (title != helpTitle || text != helpText)
+    {
+        helpTitle = title;
+        helpText = text;
+        repaint (helpArea);
+    }
+}
+
+void TrackEditor::paintHelp (juce::Graphics& g)
+{
+    if (helpArea.getHeight() < 40)
+        return;
+    auto box = helpArea.toFloat();
+    g.setColour (theme::panelDeep);
+    g.fillRoundedRectangle (box, 8.0f);
+    g.setColour (theme::border);
+    g.drawRoundedRectangle (box.reduced (0.5f), 8.0f, 1.0f);
+
+    auto inner = helpArea.reduced (10, 8);
+    g.setColour (theme::text);
+    g.setFont (theme::font (12.0f, true));
+    g.drawText (helpTitle, inner.removeFromTop (18), juce::Justification::centredLeft);
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (11.5f));
+    g.drawFittedText (helpText, inner, juce::Justification::topLeft, juce::jmax (1, inner.getHeight() / 14), 0.9f);
 }
 
 } // namespace ff

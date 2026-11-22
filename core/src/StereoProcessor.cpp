@@ -43,18 +43,19 @@ float Decorrelator::process (float x) noexcept
 }
 
 //==============================================================================
-void StereoProcessor::prepare (double sampleRate)
+void StereoProcessor::prepare (double sampleRate, Focus focus)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
-    bells.prepare (rate);
+    bells.prepare (rate, focus);
     shortDecorrelator.prepare (rate, { 1.13f, 1.71f, 2.39f, 3.07f });
     longDecorrelator.prepare (rate, { 3.71f, 5.29f, 7.93f, 11.27f });
 
     // Gains glide with ~30 ms, modes cross-fade and Pan Away turns with ~40 ms: no step is ever abrupt.
     glideCoeff = (float) std::exp (-(double) kSubBlock / (0.030 * rate));
     modeCoeff = (float) std::exp (-(double) kSubBlock / (0.040 * rate));
+    listenCoeff = (float) std::exp (-(double) kSubBlock / (0.020 * rate));
 
-    for (int k = 0; k < kNumBells; ++k)
+    for (int k = 0; k < bells.size(); ++k)
         bandpassCoeffs[(size_t) k] = BiquadCoeffs::bandpass (rate, bells.centreHz (k), bells.q (k));
 
     reset();
@@ -77,7 +78,35 @@ void StereoProcessor::reset() noexcept
     modeMix[(size_t) mode] = 1.0f;
     panNow = panTarget;
     modeGainPrev = { modeMix[0], modeMix[1] * panNow, modeMix[2] };
+    listenNow = listenPrev = listenTarget;
     updateCoefficients();
+}
+
+void StereoProcessor::snapToTargets() noexcept
+{
+    eqNow = eqTarget;
+    spaceNow = spaceTarget;
+    transferNow = transferTarget;
+    modeMix = { 0.0f, 0.0f, 0.0f };
+    modeMix[(size_t) mode] = 1.0f;
+    panNow = panTarget;
+    constexpr float halfPi = 1.5707963267948966f;
+    modeGainPrev = { std::sin (halfPi * modeMix[0]), std::sin (halfPi * modeMix[1]) * panNow, std::sin (halfPi * modeMix[2]) };
+    listenNow = listenPrev = listenTarget;
+    updateCoefficients();
+}
+
+void StereoProcessor::setListen (Listen l) noexcept
+{
+    switch (l)
+    {
+        case Listen::deltaAll:   listenTarget = { 1.0f, 0.0f, -1.0f }; break;
+        case Listen::deltaEq:    listenTarget = { 0.0f, 1.0f, -1.0f }; break;
+        case Listen::deltaSpace: listenTarget = { 1.0f, -1.0f, 0.0f }; break;
+        case Listen::input:      listenTarget = { 1.0f, 0.0f, 0.0f }; break;
+        case Listen::normal:
+        default:                 listenTarget = { 0.0f, 0.0f, 1.0f }; break;
+    }
 }
 
 void StereoProcessor::setTargets (const BellArray& eqCutDb, const BellArray& spaceCutDb, const BellArray& transferWeights,
@@ -94,7 +123,7 @@ void StereoProcessor::updateCoefficients() noexcept
 {
     constexpr float activeDb = 1.0e-3f;
 
-    for (int k = 0; k < kNumBells; ++k)
+    for (int k = 0; k < bells.size(); ++k)
     {
         const auto i = (size_t) k;
 
@@ -150,6 +179,14 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
             modeMix[(size_t) m] = target + modeCoeff * (modeMix[(size_t) m] - target);
         }
         panNow = panTarget + modeCoeff * (panNow - panTarget);
+        for (size_t c = 0; c < 3; ++c)
+        {
+            listenNow[c] = listenTarget[c] + listenCoeff * (listenNow[c] - listenTarget[c]);
+            if (std::abs (listenNow[c] - listenTarget[c]) < 1.0e-5f)
+                listenNow[c] = listenTarget[c];
+        }
+        const bool listenPlain = listenNow == listenTarget && listenPrev == listenTarget
+                                 && listenTarget[0] == 0.0f && listenTarget[1] == 0.0f;
 
         // Equal-power cross-fade (the three signals are mutually uncorrelated) with a sine law,
         // which starts with a finite slope, ramped per sample across the sub-block.
@@ -167,6 +204,7 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
             const float gPan    = modeGainPrev[1] + t * (modeGainNext[1] - modeGainPrev[1]);
             const float gDecor  = modeGainPrev[2] + t * (modeGainNext[2] - modeGainPrev[2]);
 
+            const float dryL = left[j], dryR = right[j];
             const float m = 0.5f * (left[j] + right[j]);
             float side = 0.5f * (left[j] - right[j]);
 
@@ -189,6 +227,7 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
 
             float l = mid + side;
             float r = mid - side;
+            const float spacedL = l, spacedR = r;
             for (int k = 0; k < kNumBells; ++k)
             {
                 if (eqActive[(size_t) k])
@@ -197,10 +236,23 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
                     r = eqRight[(size_t) k].process (r, eqCoeffs[(size_t) k]);
                 }
             }
-            left[j] = l;
-            right[j] = r;
+            if (listenPlain)
+            {
+                left[j] = l;
+                right[j] = r;
+            }
+            else
+            {
+                // Delta / input monitoring, ramped per sample so switching never clicks.
+                const float a = listenPrev[0] + t * (listenNow[0] - listenPrev[0]);
+                const float b = listenPrev[1] + t * (listenNow[1] - listenPrev[1]);
+                const float c = listenPrev[2] + t * (listenNow[2] - listenPrev[2]);
+                left[j] = a * dryL + b * spacedL + c * l;
+                right[j] = a * dryR + b * spacedR + c * r;
+            }
         }
         modeGainPrev = modeGainNext;
+        listenPrev = listenNow;
         done += n;
     }
 }

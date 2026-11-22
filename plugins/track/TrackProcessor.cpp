@@ -4,6 +4,7 @@
 #include "TrackProcessor.h"
 #include "TrackEditor.h"
 #include "../common/Theme.h"
+#include "../common/ScalingEditor.h"
 
 #include <cstring>
 
@@ -49,7 +50,9 @@ TrackProcessor::TrackProcessor()
     raw.release     = parameters.getRawParameterValue (release);
     raw.attackManual  = parameters.getRawParameterValue (attackManual);
     raw.releaseManual = parameters.getRawParameterValue (releaseManual);
-    displayBank.prepare (48000.0);
+    raw.focus = parameters.getRawParameterValue (focus);
+    for (int f = 0; f < kNumFocus; ++f)
+        displayBanks[(size_t) f].prepare (48000.0, (Focus) f);
 
     claimSlot (SharedBus::makeInstanceId());
     refreshBusName();
@@ -119,6 +122,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackProcessor::createLayout
     layout.add (millis (release, "Release", 20.0f, 3000.0f, 400.0f));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { attackManual, 1 }, "Attack Manual", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { releaseManual, 1 }, "Release Manual", false));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { focus, 1 }, "Focus",
+                                                        StringArray { "Smooth", "Focus", "Sharp" }, 0));
     return layout;
 }
 
@@ -144,7 +149,8 @@ bool TrackProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void TrackProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
-    displayBank.prepare (sampleRate);
+    for (int f = 0; f < kNumFocus; ++f)
+        displayBanks[(size_t) f].prepare (sampleRate, (Focus) f);
     monoScratch.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
     setLatencySamples (engine.latencySamples());
 }
@@ -169,6 +175,8 @@ TrackParams TrackProcessor::readParams() const noexcept
     p.spaceComp     = raw.spaceComp->load() > 0.5f;
     p.attackMs      = raw.attackManual->load() > 0.5f ? raw.attack->load() : 0.0f;
     p.releaseMs     = raw.releaseManual->load() > 0.5f ? raw.release->load() : 0.0f;
+    p.focus         = (Focus) juce::jlimit (0, kNumFocus - 1, (int) raw.focus->load());
+    p.listen        = (Listen) juce::jlimit (0, 4, listen.load());
 
     const int side = (int) raw.panSide->load();
     p.panSign = side == 1 ? 1.0f : side == 2 ? -1.0f : ((instanceId() & 1u) ? 1.0f : -1.0f);
@@ -200,11 +208,26 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
 
     auto params = readParams();
     params.bypass = params.bypass || forceBypass;
+    if (forceBypass)
+        params.listen = Listen::normal;   // the DAW's bypass always means "the original sound"
 
     bus::HubData& hub = hubScratch;
     float trim = 1.0f;
     bool hubOff = false;
-    if (bus.readHub (hub))
+    bool hubBusy = false;
+    bool haveHub = bus.readHub (hub, &hubBusy);
+    if (haveHub)
+    {
+        lastHub = hub;
+        lastHubMs = SharedBus::nowMs();
+    }
+    else if (hubBusy && SharedBus::nowMs() - lastHubMs < bus::kStaleAfterMs)
+    {
+        // The Hub was being written at that very moment: keep its last settings.
+        hub = lastHub;
+        haveHub = true;
+    }
+    if (haveHub)
     {
         const auto mine = hub.trimFor (instanceId());
         trim = juce::jlimit (0.0f, 1.5f, mine.trim);
@@ -280,7 +303,7 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
         if (lock.isLocked())
         {
             std::memcpy (d.name, nameForBus, sizeof (d.name));
-            d.colourArgb = colourArgb;
+            d.colourArgb = colourForBus;
         }
     }
     d.references[0] = refId;
@@ -305,6 +328,8 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
     d.compensationDb = engine.compensationDb();
     d.spaceMode = (std::uint32_t) params.spaceMode;
     d.hubTrim = trim;
+    d.focus = (std::uint32_t) engine.focus();
+    d.listen = (std::uint32_t) params.listen;
     d.flags = (params.bypass ? bus::flagBypassed : 0u) | (referenceLost ? bus::flagReferenceLost : 0u)
             | (params.link ? 0u : bus::flagLinkOff) | (hubOff ? bus::flagHubBypassed : 0u);
     bus.publish (d);
@@ -314,6 +339,12 @@ void TrackProcessor::timerCallback()
 {
     // Keeps us visible while the host is not running the audio callback.
     bus.heartbeat();
+    if (! bus.ownsSlot())
+    {
+        // The slot was taken over while we stalled: come back under the same id.
+        claimSlot (instanceId() != 0 ? instanceId() : SharedBus::makeInstanceId());
+        refreshBusName();
+    }
     applyRemoteCommand();
 }
 
@@ -366,23 +397,65 @@ juce::String TrackProcessor::referenceName() const
 juce::String TrackProcessor::trackName() const
 {
     const juce::SpinLock::ScopedLockType lock (identityLock);
-    return name.isNotEmpty() ? name : "Track " + idToString (instanceId()).substring (0, 4).toUpperCase();
+    if (typedName.isNotEmpty())
+        return typedName;
+    if (hostName.isNotEmpty())
+        return hostName;
+    return "Track " + idToString (instanceId()).substring (0, 4).toUpperCase();
 }
 
 juce::Colour TrackProcessor::trackColour() const
 {
     const juce::SpinLock::ScopedLockType lock (identityLock);
-    return theme::trackColour (colourArgb, instanceId());
+    return theme::trackColour (typedColour != 0 ? typedColour : hostColour, instanceId());
+}
+
+void TrackProcessor::setManualName (const juce::String& newName)
+{
+    {
+        const juce::SpinLock::ScopedLockType lock (identityLock);
+        typedName = newName.trim().substring (0, 40);
+    }
+    refreshBusName();
+}
+
+juce::String TrackProcessor::manualName() const
+{
+    const juce::SpinLock::ScopedLockType lock (identityLock);
+    return typedName;
+}
+
+void TrackProcessor::setManualColour (juce::Colour c)
+{
+    {
+        const juce::SpinLock::ScopedLockType lock (identityLock);
+        typedColour = c.isTransparent() ? 0u : c.withAlpha (1.0f).getARGB();
+    }
+    refreshBusName();
+}
+
+bool TrackProcessor::hasManualColour() const
+{
+    const juce::SpinLock::ScopedLockType lock (identityLock);
+    return typedColour != 0;
+}
+
+TrackProcessor::HostInfo TrackProcessor::hostInfo() const
+{
+    const juce::SpinLock::ScopedLockType lock (identityLock);
+    return { hostCalls, hostName, hostColour };
 }
 
 void TrackProcessor::updateTrackProperties (const TrackProperties& properties)
 {
     {
         const juce::SpinLock::ScopedLockType lock (identityLock);
-        if (properties.name.has_value())
-            name = *properties.name;
-        if (properties.colour.has_value())
-            colourArgb = properties.colour->getARGB();
+        ++hostCalls;
+        if (properties.name.has_value() && properties.name->trim().isNotEmpty())
+            hostName = properties.name->trim();
+        // Some hosts send the colour with a zero alpha: the colour is still meant.
+        if (properties.colour.has_value() && properties.colour->getARGB() != 0)
+            hostColour = properties.colour->withAlpha (1.0f).getARGB();
     }
     refreshBusName();
 }
@@ -390,9 +463,11 @@ void TrackProcessor::updateTrackProperties (const TrackProperties& properties)
 void TrackProcessor::refreshBusName()
 {
     const auto shown = trackName();
+    const auto colour = trackColour();
     const juce::SpinLock::ScopedLockType lock (identityLock);
     std::memset (nameForBus, 0, sizeof (nameForBus));
     shown.copyToUTF8 (nameForBus, sizeof (nameForBus) - 1);
+    colourForBus = colour.getARGB();
 }
 
 //==============================================================================
@@ -403,9 +478,13 @@ void TrackProcessor::getStateInformation (juce::MemoryBlock& destData)
     tree.setProperty ("referenceId", idToString (reference.load()), nullptr);
     tree.setProperty ("referenceName", referenceName(), nullptr);
     tree.setProperty ("uiLevel", level.load(), nullptr);
+    tree.setProperty ("uiScale", scale.load(), nullptr);
     {
         const juce::SpinLock::ScopedLockType lock (identityLock);
-        tree.setProperty ("trackName", name, nullptr);
+        tree.setProperty ("trackName", hostName, nullptr);   // last name the DAW sent
+        tree.setProperty ("hostColour", juce::String::toHexString ((juce::int64) hostColour), nullptr);
+        tree.setProperty ("manualName", typedName, nullptr);
+        tree.setProperty ("manualColour", juce::String::toHexString ((juce::int64) typedColour), nullptr);
     }
 
     if (auto xml = tree.createXml())
@@ -432,18 +511,26 @@ void TrackProcessor::setStateInformation (const void* data, int sizeInBytes)
     setReference (idFromString (tree.getProperty ("referenceId").toString()), tree.getProperty ("referenceName").toString());
     setUiLevel ((int) tree.getProperty ("uiLevel", 1));
 
-    const auto savedName = tree.getProperty ("trackName").toString();
-    if (savedName.isNotEmpty())
+    scale = (float) tree.getProperty ("uiScale", 0.0f);
     {
-        TrackProperties props;
-        props.name = savedName;
-        updateTrackProperties (props);
+        const juce::SpinLock::ScopedLockType lock (identityLock);
+        // What the DAW sent last time, until it sends again (it may never: some hosts don't).
+        const auto savedHostName = tree.getProperty ("trackName").toString();
+        if (hostName.isEmpty() && savedHostName.isNotEmpty())
+            hostName = savedHostName;
+        const auto savedHostColour = (juce::uint32) tree.getProperty ("hostColour").toString().getHexValue64();
+        if (hostColour == 0 && savedHostColour != 0)
+            hostColour = savedHostColour;
+        typedName = tree.getProperty ("manualName").toString();
+        typedColour = (juce::uint32) tree.getProperty ("manualColour").toString().getHexValue64();
     }
+    refreshBusName();
 }
 
 juce::AudioProcessorEditor* TrackProcessor::createEditor()
 {
-    return new TrackEditor (*this);
+    return new ScalingEditor (*this, std::make_unique<TrackEditor> (*this), TrackEditor::kWidth, TrackEditor::kHeight,
+                              "trackScale", editorScale(), [this] (float s) { setEditorScale (s); });
 }
 
 } // namespace ff

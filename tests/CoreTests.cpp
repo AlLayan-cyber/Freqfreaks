@@ -12,6 +12,7 @@
 #include "ff/Unmasking.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -476,6 +477,11 @@ void testClicks()
         { "Auto gain on",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.autoGain = true; } },
         { "Output +6 dB",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.outputDb = 6.0f; } },
         { "reference lost",            [] (ff::TrackParams&, ff::ReferenceSnapshot& r) { r.valid = false; } },
+        { "Focus -> Sharp",            [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.focus = ff::Focus::sharp; } },
+        { "Focus -> Focus",            [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.focus = ff::Focus::focus; } },
+        { "Delta on",                  [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::deltaAll; } },
+        { "Delta EQ only",             [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::deltaEq; } },
+        { "input monitoring",          [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::input; } },
     };
 
     const int from = 256 * 400, to = from + (int) (0.09 * kRate);
@@ -488,6 +494,127 @@ void testClicks()
         if (ratio > 1.5)
             std::printf ("  click: %s (x%.2f)\n", name, ratio);
         CHECK (ratio < 1.5);
+    }
+}
+
+void testFocus()
+{
+    const auto& layout = ff::BandLayout::get();
+
+    // A narrow conflict around 2.5 kHz: the narrower banks cut less beside it.
+    ff::BandArray cut {};
+    for (int b = 0; b < ff::kNumBands; ++b)
+    {
+        const double e = ff::hzToErbRate (layout.centreHz[(size_t) b]) - ff::hzToErbRate (2500.0f);
+        cut[(size_t) b] = (float) (6.0 * std::exp (-0.5 * e * e / 1.0));
+    }
+    ff::BandArray ones {};
+    ones.fill (1.0f);
+
+    float besideSmooth = 0.0f, centrePrev = 1.5f;
+    for (auto focus : { ff::Focus::smooth, ff::Focus::focus, ff::Focus::sharp })
+    {
+        ff::BellBank bank;
+        bank.prepare (kRate, focus);
+        CHECK (bank.size() == ff::bellsFor (focus));
+        std::array<bool, ff::kNumBells> allowed {};
+        allowed.fill (true);
+        ff::BellArray gains {};
+        for (int i = 0; i < 30; ++i)
+            bank.fit (cut, ones, allowed, 12.0f, gains);
+        for (int k = bank.size(); k < ff::kNumBells; ++k)
+            CHECK (gains[(size_t) k] == 0.0f);
+
+        const float centre = bank.cutAt (2500.0f, gains);
+        const float beside = 0.5f * (bank.cutAt (1250.0f, gains) + bank.cutAt (5000.0f, gains));
+        std::printf ("  info: focus %d (%d bells, Q %.2f): cut at 2.5 kHz %.2f dB, an octave beside %.2f dB\n",
+                     (int) focus, bank.size(), bank.q (0), centre, beside);
+        // The narrower the bells, the closer the cut gets to a narrow conflict, and the less around it.
+        CHECK (centre > centrePrev);
+        centrePrev = centre;
+        if (focus == ff::Focus::smooth)
+            besideSmooth = beside;
+        else
+            CHECK (beside < besideSmooth);
+
+        // Range limits hold for every bank.
+        ff::BandArray low {};
+        for (int b = 0; b < ff::kNumBands; ++b)
+        {
+            const float hz = layout.centreHz[(size_t) b];
+            low[(size_t) b] = (hz >= 140.0f && hz <= 600.0f) ? 4.0f : 0.0f;
+        }
+        ff::BellArray g2 {};
+        const auto w = ff::BellBank::rangeWeights (140.0f, 14000.0f);
+        const auto ok = bank.bellsWithin (140.0f * 1.1f, 14000.0f);
+        for (int i = 0; i < 20; ++i)
+            bank.fit (low, w, ok, 6.0f, g2);
+        for (float hz : { 30.0f, 50.0f, 70.0f, 90.0f })
+            CHECK (bank.cutAt (hz, g2) < 0.5f);
+        CHECK (bank.cutAt (300.0f, g2) > 3.0f);
+
+        // Space transfer keeps the energy with every bank.
+        ff::BellArray space {}, weights {};
+        for (int k = 0; k < bank.size(); ++k)
+            space[(size_t) k] = bank.centreHz (k) > 300.0f && bank.centreHz (k) < 3000.0f ? 3.0f : 0.0f;
+        for (int i = 0; i < 40; ++i)
+            bank.fitTransfer (space, weights);
+        const float err = bank.transferErrorDb (space, weights);
+        std::printf ("  info: focus %d transfer energy error %.2f dB\n", (int) focus, err);
+        CHECK (err < 1.0f);
+    }
+}
+
+void testDelta()
+{
+    // Normal + Delta = the (delayed) input; Delta EQ + Delta Space = Delta; input = input.
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    for (int b = 0; b < ff::kNumBands; ++b)
+        ref.midDb[(size_t) b] = -40.0f;
+
+    const int block = 256, n = block * 400;
+    const auto srcL = noise (n, 11, 0.2f), srcR = noise (n, 12, 0.2f);
+    auto run = [&] (ff::Listen listen, ff::Focus focus) {
+        ff::TrackEngine e;
+        e.prepare (kRate, block);
+        ff::TrackParams p;
+        p.amount = 1.0f;
+        p.spaceComp = false;
+        p.listen = listen;
+        p.focus = focus;
+        std::pair<std::vector<float>, std::vector<float>> out { srcL, srcR };
+        for (int i = 0; i < n; i += block)
+            e.process (out.first.data() + i, out.second.data() + i, block, p, ref);
+        return out;
+    };
+
+    for (auto focus : { ff::Focus::smooth, ff::Focus::sharp })
+    {
+        const auto normal = run (ff::Listen::normal, focus);
+        const auto delta = run (ff::Listen::deltaAll, focus);
+        const auto deltaEq = run (ff::Listen::deltaEq, focus);
+        const auto deltaSpace = run (ff::Listen::deltaSpace, focus);
+        const auto input = run (ff::Listen::input, focus);
+        const int lat = (int) std::lround (ff::TrackEngine::kLookaheadSeconds * kRate);
+
+        double worstSum = 0.0, worstSplit = 0.0, worstInput = 0.0, deltaPower = 0.0;
+        for (int i = n / 2; i < n; ++i)
+        {
+            const auto u = (size_t) i;
+            const double dryL = srcL[u - (size_t) lat], dryR = srcR[u - (size_t) lat];
+            worstSum = std::max ({ worstSum, std::abs (normal.first[u] + delta.first[u] - dryL),
+                                   std::abs (normal.second[u] + delta.second[u] - dryR) });
+            worstSplit = std::max (worstSplit, (double) std::abs (deltaEq.first[u] + deltaSpace.first[u] - delta.first[u]));
+            worstInput = std::max (worstInput, std::abs (input.first[u] - dryL));
+            deltaPower += (double) delta.first[u] * delta.first[u];
+        }
+        std::printf ("  info: focus %d delta: |normal + delta - dry| %.1e, |dEq + dSpace - d| %.1e, delta %.1f dB\n",
+                     (int) focus, worstSum, worstSplit, 10.0 * std::log10 (deltaPower / (n / 2) / 0.04));
+        CHECK (worstSum < 1.0e-4);
+        CHECK (worstSplit < 1.0e-4);
+        CHECK (worstInput < 1.0e-6);
+        CHECK (deltaPower > 1.0e-6 * n);   // something was taken away
     }
 }
 
@@ -756,6 +883,77 @@ void testSharedBus()
         fresh.release();
 
         CHECK (hub.list().size() == 1);
+
+        // The reported bug: the Hub publishes from the audio thread and its timer at once.
+        // With two racing writers the sequence could stay odd for good and every track
+        // stopped seeing the Hub. Now the second writer skips, and readers keep working.
+        {
+            std::atomic<bool> stopHub { false };
+            auto hubWriter = [&] (float value) {
+                ff::bus::HubData w;
+                while (! stopHub.load())
+                {
+                    w.totalAmount = value;
+                    hub.publishHub (w);
+                }
+            };
+            std::thread w1 (hubWriter, 0.25f), w2 (hubWriter, 0.75f);
+            int ok = 0, torn = 0;
+            for (int i = 0; i < 200000; ++i)
+            {
+                ff::bus::HubData rd;
+                if (a.readHub (rd))
+                {
+                    ++ok;
+                    if (rd.totalAmount != 0.25f && rd.totalAmount != 0.75f && rd.totalAmount != 0.5f)   // 0.5 = before the race
+                        ++torn;
+                }
+            }
+            stopHub = true;
+            w1.join();
+            w2.join();
+            ff::bus::HubData after;
+            after.totalAmount = 0.4f;
+            hub.publishHub (after);
+            ff::bus::HubData rd;
+            CHECK (ok > 0);
+            CHECK (torn == 0);
+            CHECK (a.readHub (rd));                      // still readable after the race
+            CHECK_NEAR (rd.totalAmount, 0.4, 1e-6);
+        }
+
+        // A Hub that lost the bus to another instance (which then went away) takes it back.
+        {
+            const auto mainId = ff::SharedBus::makeInstanceId();
+            ff::SharedBus mainHub (region);
+            hub.releaseHub();
+            CHECK (mainHub.ensureHub (mainId));
+            {
+                ff::SharedBus other (region);
+                CHECK (! other.ensureHub (ff::SharedBus::makeInstanceId()));   // the main one is alive
+            }
+            {
+                // Simulate a stall: the other instance takes over, then is destroyed.
+                ff::SharedBus other (region);
+                const auto otherId = ff::SharedBus::makeInstanceId();
+                ff::bus::HubData stalled;
+                std::this_thread::sleep_for (std::chrono::milliseconds ((int) ff::bus::kStaleAfterMs + 100));
+                CHECK (other.ensureHub (otherId));
+                mainHub.publishHub (stalled);           // ignored: not the owner any more
+            }
+            ff::bus::HubData rd;
+            CHECK (! a.readHub (rd));                    // nobody holds it now
+            CHECK (mainHub.ensureHub (mainId));          // the timer takes it back
+            ff::bus::HubData back;
+            back.totalAmount = 0.6f;
+            mainHub.publishHub (back);
+            CHECK (a.readHub (rd));
+            CHECK_NEAR (rd.totalAmount, 0.6, 1e-6);
+            mainHub.releaseHub();
+        }
+
+        // A track whose slot was taken over notices and does not write into it.
+        CHECK (a.ownsSlot());
     }
 
    #if ! defined (_WIN32)
@@ -779,6 +977,8 @@ int main()
         { "track engine", testTrackEngine },
         { "loudness compensation", testLoudness },
         { "no clicks on switches", testClicks },
+        { "focus", testFocus },
+        { "delta monitoring", testDelta },
         { "shared bus", testSharedBus },
     };
 

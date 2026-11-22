@@ -31,7 +31,8 @@ void drawCard (juce::Graphics&, juce::Rectangle<float> area, juce::Colour topAcc
     On top hangs the suppression wave: the exact response of the Space bells
     (teal) and of the EQ bells (amber), stacked down from a 0 dB line, with a red
     edge where release is missing and a slowly falling peak line. */
-class SpectrumView : public juce::Component
+class SpectrumView : public juce::Component,
+                     public juce::SettableTooltipClient
 {
 public:
     SpectrumView();
@@ -66,7 +67,8 @@ private:
 //==============================================================================
 /** The "release budget": one stacked bar per band — Space (teal), EQ (amber),
     and what is left (red when Link is on, grey when it is off). */
-class BudgetView : public juce::Component
+class BudgetView : public juce::Component,
+                   public juce::SettableTooltipClient
 {
 public:
     void setData (const bus::TrackData& data);

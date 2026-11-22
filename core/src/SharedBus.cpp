@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstring>
 #include <random>
+#include <thread>
 
 #if defined (_WIN32)
  #ifndef NOMINMAX
@@ -31,15 +32,46 @@ namespace
         return memory;
     }
 
+    /** Sequence-lock write. An odd sequence means "being written" and doubles as the writer
+        lock: only the writer that turns it odd (compare-exchange) may copy. A second writer
+        (the Hub publishes from the audio thread and from its timer) skips instead of racing:
+        two writers storing seq+1 / seq+2 at once could leave the sequence odd for good, and
+        every reader would then fail forever. Returns false when skipped. */
     template <typename Data>
-    void seqWrite (std::atomic<std::uint32_t>& sequence, Data& target, const Data& source) noexcept
+    bool seqTryWrite (std::atomic<std::uint32_t>& sequence, Data& target, const Data& source) noexcept
     {
-        const auto seq = sequence.load (std::memory_order_relaxed);
-        sequence.store (seq + 1, std::memory_order_relaxed);
+        auto seq = sequence.load (std::memory_order_relaxed);
+        if ((seq & 1u) != 0 || ! sequence.compare_exchange_strong (seq, seq + 1, std::memory_order_acquire, std::memory_order_relaxed))
+            return false;
         std::atomic_thread_fence (std::memory_order_release);
         std::memcpy (static_cast<void*> (&target), &source, sizeof (Data));
         std::atomic_thread_fence (std::memory_order_release);
         sequence.store (seq + 2, std::memory_order_release);
+        return true;
+    }
+
+    /** For the message thread: a write that must not be dropped (claims, remote commands). */
+    template <typename Data>
+    void seqWrite (std::atomic<std::uint32_t>& sequence, Data& target, const Data& source) noexcept
+    {
+        for (int attempt = 0; attempt < 2000; ++attempt)
+        {
+            if (seqTryWrite (sequence, target, source))
+                return;
+            std::this_thread::yield();
+        }
+        // Still odd after that long: the writer died mid-write (crashed process). Recover.
+        auto seq = sequence.load (std::memory_order_relaxed);
+        sequence.store ((seq | 1u) + 1u, std::memory_order_release);
+        seqTryWrite (sequence, target, source);
+    }
+
+    /** A new owner takes a slot over: a writer that died mid-write may have left it odd. */
+    void unlockAbandoned (std::atomic<std::uint32_t>& sequence) noexcept
+    {
+        const auto seq = sequence.load (std::memory_order_relaxed);
+        if ((seq & 1u) != 0)
+            sequence.store (seq + 1u, std::memory_order_release);
     }
 
     template <typename Data>
@@ -204,6 +236,11 @@ bool SharedBus::claim (std::uint64_t instanceId)
             if ((free || sameIdLeftover || abandoned) && s.owner.compare_exchange_strong (current, instanceId))
             {
                 s.heartbeatMs.store (now);
+                if (abandoned)
+                {
+                    unlockAbandoned (s.sequence);
+                    unlockAbandoned (s.remoteSequence);
+                }
                 mySlot = i;
                 myId = instanceId;
                 bus::TrackData empty;
@@ -228,10 +265,13 @@ void SharedBus::release()
         return;
 
     auto& s = mem->slots[mySlot];
-    bus::TrackData empty;
-    seqWrite (s.sequence, s.data, empty);
-    auto expected = myId;
-    s.owner.compare_exchange_strong (expected, 0);
+    if (s.owner.load() == myId)   // never wipe a slot someone else has taken over
+    {
+        bus::TrackData empty;
+        seqWrite (s.sequence, s.data, empty);
+        auto expected = myId;
+        s.owner.compare_exchange_strong (expected, 0);
+    }
     mySlot = -1;
     myId = 0;
 }
@@ -241,8 +281,15 @@ void SharedBus::publish (const bus::TrackData& data) noexcept
     if (mySlot < 0)
         return;
     auto& s = mem->slots[mySlot];
-    seqWrite (s.sequence, s.data, data);
+    if (s.owner.load (std::memory_order_relaxed) != myId)
+        return;   // the slot was taken over; ownsSlot() tells the owner to claim again
+    seqTryWrite (s.sequence, s.data, data);
     s.heartbeatMs.store (nowMs(), std::memory_order_relaxed);
+}
+
+bool SharedBus::ownsSlot() const noexcept
+{
+    return mySlot >= 0 && mem->slots[mySlot].owner.load (std::memory_order_relaxed) == myId;
 }
 
 void SharedBus::heartbeat() noexcept
@@ -336,10 +383,25 @@ bool SharedBus::claimHub (std::uint64_t instanceId)
     if (available && h.owner.compare_exchange_strong (current, instanceId))
     {
         h.heartbeatMs.store (now);
+        if (current != 0 && current != instanceId)
+            unlockAbandoned (h.sequence);
         myHubId = instanceId;
         return true;
     }
     return false;
+}
+
+bool SharedBus::ensureHub (std::uint64_t instanceId)
+{
+    if (mem->hub.owner.load() == instanceId && instanceId != 0)
+    {
+        myHubId = instanceId;
+        return true;
+    }
+    // Lost it (another Hub instance took over while this one stalled, then went away),
+    // or never had it: take it whenever it is free or its holder stopped beating.
+    myHubId = 0;
+    return claimHub (instanceId);
 }
 
 void SharedBus::releaseHub()
@@ -347,9 +409,12 @@ void SharedBus::releaseHub()
     if (myHubId == 0)
         return;
     auto& h = mem->hub;
-    seqWrite (h.sequence, h.data, bus::HubData {});
-    auto expected = myHubId;
-    h.owner.compare_exchange_strong (expected, 0);
+    if (h.owner.load() == myHubId)
+    {
+        seqWrite (h.sequence, h.data, bus::HubData {});
+        auto expected = myHubId;
+        h.owner.compare_exchange_strong (expected, 0);
+    }
     myHubId = 0;
 }
 
@@ -357,17 +422,26 @@ void SharedBus::publishHub (const bus::HubData& data) noexcept
 {
     if (myHubId == 0 || mem->hub.owner.load (std::memory_order_relaxed) != myHubId)
         return;
-    seqWrite (mem->hub.sequence, mem->hub.data, data);
+    seqTryWrite (mem->hub.sequence, mem->hub.data, data);
     mem->hub.heartbeatMs.store (nowMs(), std::memory_order_relaxed);
 }
 
-bool SharedBus::readHub (bus::HubData& out) const noexcept
+bool SharedBus::readHub (bus::HubData& out, bool* busy) const noexcept
 {
     const auto& h = mem->hub;
+    if (busy != nullptr)
+        *busy = false;
     if (h.owner.load (std::memory_order_acquire) == 0
-        || nowMs() - h.heartbeatMs.load (std::memory_order_relaxed) > bus::kStaleAfterMs
-        || ! seqRead (h.sequence, h.data, out))
+        || nowMs() - h.heartbeatMs.load (std::memory_order_relaxed) > bus::kStaleAfterMs)
     {
+        out = bus::HubData {};
+        return false;
+    }
+    if (! seqRead (h.sequence, h.data, out))
+    {
+        // A live Hub that was being written at that moment: the caller may keep its last copy.
+        if (busy != nullptr)
+            *busy = true;
         out = bus::HubData {};
         return false;
     }

@@ -13,18 +13,53 @@
 namespace ff
 {
 
+/** Speaker icon next to the track name: click = Delta (hear only what is taken away),
+    right click = choose what to hear. Lit while anything but the normal sound is on. */
+class ListenButton : public juce::Component,
+                     public juce::SettableTooltipClient
+{
+public:
+    explicit ListenButton (TrackProcessor&);
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+
+private:
+    void showMenu();
+    TrackProcessor& processor;
+    int lastDelta = 1;
+};
+
+/** The track colour dot: click to pick a colour, or go back to the DAW's. */
+class ColourDot : public juce::Component,
+                  public juce::SettableTooltipClient
+{
+public:
+    explicit ColourDot (TrackProcessor&);
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+
+private:
+    TrackProcessor& processor;
+};
+
 /** The Track window from the UI mockup: header with the reference picker,
     spectrum, release budget, the Amount / Link / Space Amount knobs, and an
-    Expert drawer. Simple / Detail / Expert show progressively more. */
-class TrackEditor : public juce::AudioProcessorEditor,
+    Expert drawer. Simple / Detail / Expert show progressively more.
+
+    Drawn at a fixed base size; ScalingEditor scales it as a whole. */
+class TrackEditor : public juce::Component,
                     private juce::Timer
 {
 public:
+    static constexpr int kWidth = 1120;
+    static constexpr int kHeight = 860;
+
     explicit TrackEditor (TrackProcessor&);
     ~TrackEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     struct ParamRow
@@ -41,10 +76,15 @@ private:
     void applyLevel (int level);
     void setupRow (ParamRow&, const char* paramId, const juce::String& text);
 
+    void updateHelp();
+    void paintHelp (juce::Graphics&);
+
     TrackProcessor& processor;
     LookAndFeel lnf;
 
     juce::Label trackLabel, yieldsLabel;
+    ColourDot colourDot;
+    ListenButton listenButton;
     juce::ComboBox referenceBox;
     std::vector<std::uint64_t> referenceIds;
     juce::String referenceSignature;
@@ -63,6 +103,7 @@ private:
 
     juce::TextButton modeSpread { "Spread" }, modePan { "Pan Away" }, modeDecor { "Decorrelate" };
     juce::TextButton sideAuto { "Auto" }, sideLeft { "L" }, sideRight { "R" };
+    juce::TextButton focusSmooth { "Smooth" }, focusFocus { "Focus" }, focusSharp { "Sharp" };
 
     juce::Slider outputSlider;
     juce::TextButton autoGainButton { "Auto" }, spaceCompButton { "Space comp" };
@@ -74,7 +115,11 @@ private:
 
     // Layout rectangles used by paint().
     juce::Rectangle<int> header, spectrumCard, budgetCard, knobCard, drawer, amountArea, spaceArea;
-    juce::Rectangle<int> eqCard, spaceCard, detectCard;
+    juce::Rectangle<int> eqCard, spaceCard, detectCard, helpArea;
+    juce::String helpTitle, helpText;
+    juce::Colour shownRefColour { theme::reference };
+    juce::String shownRefName;
+    int tick = 0;
     bool hubOnline = false, referenceLost = false;
     int trackCount = 0;
 

@@ -23,7 +23,7 @@ namespace ff
 namespace bus
 {
     constexpr std::uint32_t kMagic   = 0x46524551;   // "FREQ"
-    constexpr std::uint32_t kVersion = 2;   // bump on any layout change
+    constexpr std::uint32_t kVersion = 3;   // bump on any layout change
     constexpr int kMaxSlots = 64;
     constexpr int kNameLength = 48;
     constexpr int kMaxReferences = 4;
@@ -53,6 +53,8 @@ namespace bus
         std::uint32_t spaceMode = 0;                    // 0 Spread, 1 Pan Away, 2 Decorrelate
         float hubTrim = 1.0f;                           // the Hub's trim this track is applying
         std::uint32_t flags = 0;                        // see TrackFlags
+        std::uint32_t focus = 0;                        // bell layout of eqBells/spaceBells (ff::Focus)
+        std::uint32_t listen = 0;                       // monitoring (ff::Listen), 0 = normal
     };
 
     enum TrackFlags : std::uint32_t
@@ -179,6 +181,10 @@ public:
     bool claim (std::uint64_t instanceId);
     void release();
     int slotIndex() const noexcept      { return mySlot; }
+
+    /** False if this instance's slot was taken over (it stalled long enough to look crashed):
+        call claim() again. */
+    bool ownsSlot() const noexcept;
     std::uint64_t instanceId() const noexcept { return myId; }
 
     /** Real-time safe: copies data into this instance's slot and beats the heart. */
@@ -202,11 +208,14 @@ public:
 
     // Hub side.
     bool claimHub (std::uint64_t instanceId);
+    /** Call regularly: true while this instance holds the Hub; takes it back if it was lost. */
+    bool ensureHub (std::uint64_t instanceId);
     void releaseHub();
     void publishHub (const bus::HubData& data) noexcept;
 
-    /** Latest Hub data; returns false (and defaults) if no live Hub. */
-    bool readHub (bus::HubData& out) const noexcept;
+    /** Latest Hub data; returns false (and defaults) if no live Hub. busy = there is a live Hub,
+        but it was being written at that moment (keep the last copy). */
+    bool readHub (bus::HubData& out, bool* busy = nullptr) const noexcept;
 
     static std::uint64_t nowMs() noexcept;
     static std::uint64_t makeInstanceId();

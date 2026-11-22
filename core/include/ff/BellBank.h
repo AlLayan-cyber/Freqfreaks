@@ -11,8 +11,15 @@
 namespace ff
 {
 
-constexpr int kNumBells = 16;
+/** Most bells any Focus setting uses; arrays are always this long, unused bells stay at 0. */
+constexpr int kNumBells = 32;
 using BellArray = std::array<float, kNumBells>;
+
+/** How narrow the suppression is: Smooth 16 wide bells (~0.8 oct), Focus 24 (~0.5 oct),
+    Sharp 32 (~1/3 oct). */
+enum class Focus { smooth = 0, focus = 1, sharp = 2 };
+constexpr int kNumFocus = 3;
+constexpr int bellsFor (Focus f) noexcept     { return f == Focus::sharp ? 32 : f == Focus::focus ? 24 : 16; }
 
 /** A fixed bank of smooth, overlapping bell filters, and a fitter that turns a
     per-band cut curve into bell gains.
@@ -29,9 +36,11 @@ using BellArray = std::array<float, kNumBells>;
 class BellBank
 {
 public:
-    void prepare (double sampleRate);
+    void prepare (double sampleRate, Focus focus = Focus::smooth);
 
     double sampleRate() const noexcept               { return rate; }
+    Focus focus() const noexcept                     { return focusMode; }
+    int size() const noexcept                        { return count; }
     float centreHz (int bell) const noexcept         { return fc[(size_t) bell]; }
     float q (int bell) const noexcept                { return qs[(size_t) bell]; }
 
@@ -70,6 +79,11 @@ public:
     BandArray response (const BellArray& gains) const noexcept;
 
 private:
+    /** Fit grid: the band centres, plus the midpoints between them for the narrow bells
+        (they would otherwise ripple between band centres unseen). */
+    int fitPoints() const noexcept                   { return oversample == 1 ? kNumBands : 2 * kNumBands - 1; }
+    void expand (const BandArray& perBand, float* grid, bool takeMax) const noexcept;
+
     float largestEigen (const BandArray& weight) const noexcept;
     float cachedEigen (const BandArray& weight) const noexcept;
 
@@ -80,12 +94,16 @@ private:
     mutable int eigenNext = 0;
 
     double rate = 48000.0;
+    Focus focusMode = Focus::smooth;
+    int count = 16, oversample = 1;
     BellArray fc {}, qs {};
-    std::array<std::array<float, kNumBells>, kNumBands> shape {};   // cut in band b per dB of bell k
+    static constexpr int kMaxFitPoints = 2 * kNumBands - 1;
+    std::array<std::array<float, kNumBells>, kMaxFitPoints> shape {};   // cut at fit point j per dB of bell k
 
-    static constexpr int kGrid = 32;                                 // log grid for the transfer fit
-    std::array<std::array<float, kNumBells>, kGrid> gridShape {};    // cut at grid point j per dB of bell k
-    std::array<std::array<std::complex<float>, kNumBells>, kGrid> gridBandpass {};
+    static constexpr int kMaxGrid = 64;                              // log grid for the transfer fit
+    int grid = 32;
+    std::array<std::array<float, kNumBells>, kMaxGrid> gridShape {};    // cut at grid point j per dB of bell k
+    std::array<std::array<std::complex<float>, kNumBells>, kMaxGrid> gridBandpass {};
     float transferStep = 0.1f;
 };
 

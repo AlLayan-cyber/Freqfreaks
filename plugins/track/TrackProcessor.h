@@ -36,6 +36,7 @@ namespace trackParams
     inline constexpr const char* release     = "release";
     inline constexpr const char* attackManual  = "attackManual";
     inline constexpr const char* releaseManual = "releaseManual";
+    inline constexpr const char* focus       = "focus";
 }
 
 /** FreqFreaks Track: sits on each track, yields room to its reference track.
@@ -93,8 +94,35 @@ public:
     std::uint64_t referenceId() const noexcept             { return reference.load(); }
     juce::String referenceName() const;
 
+    /** The name shown everywhere: the one typed in the plug-in, else the DAW's track name,
+        else "Track XXXX". */
     juce::String trackName() const;
+    /** Same for the colour: picked in the plug-in, else the DAW's, else a stable fallback. */
     juce::Colour trackColour() const;
+
+    /** Name typed in the plug-in; empty = follow the DAW. */
+    void setManualName (const juce::String&);
+    juce::String manualName() const;
+    /** Colour picked in the plug-in; transparent = follow the DAW. */
+    void setManualColour (juce::Colour);
+    bool hasManualColour() const;
+
+    /** What the DAW told us about the track (for the Expert view). */
+    struct HostInfo
+    {
+        int calls = 0;                 // how many times the DAW sent track properties
+        juce::String name;             // empty = never sent
+        juce::uint32 colourArgb = 0;   // 0 = never sent
+    };
+    HostInfo hostInfo() const;
+
+    /** Monitoring: 0 normal, 1 Delta (all), 2 Delta EQ, 3 Delta Space, 4 input. Not saved. */
+    int listenMode() const noexcept                        { return listen.load(); }
+    void setListenMode (int m) noexcept                    { listen = juce::jlimit (0, 4, m); }
+
+    /** Editor size, as a scale of the base size (0 = not set yet). Stored with the session. */
+    float editorScale() const noexcept                     { return scale.load(); }
+    void setEditorScale (float s) noexcept                 { scale = s; }
 
     /** UI level: 0 Simple, 1 Detail, 2 Expert. Stored with the session. */
     int uiLevel() const noexcept                           { return level.load(); }
@@ -108,7 +136,7 @@ public:
     float currentReleaseMs() const noexcept                { return releaseInUse.load(); }
 
     /** Exact cut curve of this track's filters, for the editor (message thread). */
-    const BellBank& bellBank() const noexcept              { return displayBank; }
+    const BellBank& bellBank (int focus) const noexcept    { return displayBanks[(size_t) juce::jlimit (0, kNumFocus - 1, focus)]; }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -122,20 +150,24 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     SharedBus bus;
     TrackEngine engine;
-    BellBank displayBank;   // same layout as the engine's, prepared on the message thread
+    std::array<BellBank, kNumFocus> displayBanks;   // same layouts as the engine's, prepared on the message thread
 
     std::atomic<std::uint64_t> reference { 0 };
-    std::atomic<int> level { 1 };
+    std::atomic<int> level { 1 }, listen { 0 };
+    std::atomic<float> scale { 0.0f };
     std::atomic<bool> hubBypass { false };
     std::atomic<float> hubTrim { 1.0f };
     std::atomic<float> attackInUse { 60.0f }, releaseInUse { 600.0f };
     std::uint32_t lastRemoteSerial = 0;   // message thread
     bus::HubData hubScratch;              // audio thread (too big for the stack)
+    bus::HubData lastHub;                 // audio thread: last good Hub read
+    std::uint64_t lastHubMs = 0;
 
     // Name/colour come from the message thread; the audio thread copies them with a try-lock.
     mutable juce::SpinLock identityLock;
-    juce::String name, refName;
-    juce::uint32 colourArgb = 0;
+    juce::String hostName, typedName, refName;
+    juce::uint32 hostColour = 0, typedColour = 0, colourForBus = 0;
+    int hostCalls = 0;
     char nameForBus[bus::kNameLength] {};
 
     bus::TrackData publishData;
@@ -165,6 +197,7 @@ private:
         std::atomic<float>* release = nullptr;
         std::atomic<float>* attackManual = nullptr;
         std::atomic<float>* releaseManual = nullptr;
+        std::atomic<float>* focus = nullptr;
     } raw;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TrackProcessor)

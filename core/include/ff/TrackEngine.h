@@ -30,6 +30,8 @@ struct TrackParams
     SpaceMode spaceMode = SpaceMode::spread;
     float panSign       = 1.0f;     ///< Pan Away direction: +1 left, -1 right
     bool  bypass        = false;
+    Focus focus         = Focus::smooth;
+    Listen listen       = Listen::normal;
 
     float outputDb      = 0.0f;     ///< manual output trim, -12..+12 dB
     bool  autoGain      = false;    ///< restore the loudness the release took away (up to +6 dB)
@@ -67,9 +69,11 @@ public:
     const BandArray& ownMidDb() const noexcept          { return analyzer.midDb(); }
     const BandArray& ownSideDb() const noexcept         { return analyzer.sideDb(); }
     const Budget& budget() const noexcept               { return currentBudget; }
-    const BellArray& eqBells() const noexcept           { return eqGains; }
-    const BellArray& spaceBells() const noexcept        { return spaceGains; }
-    const StereoProcessor& processor() const noexcept   { return stereo; }
+    const BellArray& eqBells() const noexcept           { return eqGains[(size_t) active]; }
+    const BellArray& spaceBells() const noexcept        { return spaceGains[(size_t) active]; }
+    const StereoProcessor& processor() const noexcept   { return chains[(size_t) active]; }
+    Focus focus() const noexcept                        { return (Focus) active; }
+    bool isFocusFading() const noexcept                 { return fadeFrom >= 0; }
     bool hasReference() const noexcept                  { return referenceActive; }
 
     /** The attack and release times in use right now (manual or from Speed), ms. */
@@ -87,13 +91,19 @@ public:
 private:
     void updateControl (const TrackParams& params, const ReferenceSnapshot& reference) noexcept;
     void updateCompensation (const TrackParams& params) noexcept;
+    void fitBells (int chain, const TrackParams& params, int passes) noexcept;
+    void processChains (float* left, float* right, int numSamples) noexcept;
 
     double rate = 48000.0;
     Analyzer analyzer;
     BandSmoother smoother;
-    StereoProcessor stereo;
+    // One filter chain per Focus setting. Switching cross-fades from the old chain to the
+    // new one in ~50 ms (both run only during the fade).
+    std::array<StereoProcessor, kNumFocus> chains;
+    std::array<BellArray, kNumFocus> eqGains {}, spaceGains {}, transferWeights {};
+    int active = 0, fadeFrom = -1, fadePos = 0, fadeLength = 2400;
+    std::vector<float> fadeLeft, fadeRight;
     Budget currentBudget;
-    BellArray eqGains {}, spaceGains {}, transferWeights {};
     bool referenceActive = false;
 
     float compTargetDb = 0.0f, lossVsInputDb = 0.0f, spaceVsAllEqDb = 0.0f;

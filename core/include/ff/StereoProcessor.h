@@ -14,6 +14,10 @@ namespace ff
 
 enum class SpaceMode { spread = 0, panAway = 1, decorrelate = 2 };
 
+/** What the track's output carries: the processed sound, or what was taken away
+    (Delta: everything, only the EQ part, only the Space part), or the input itself. */
+enum class Listen { normal = 0, deltaAll = 1, deltaEq = 2, deltaSpace = 3, input = 4 };
+
 /** Schroeder all-pass chain used to turn the moved Mid energy into a signal that
     is uncorrelated with the original, so it widens instead of panning. */
 class Decorrelator
@@ -47,8 +51,14 @@ private:
 class StereoProcessor
 {
 public:
-    void prepare (double sampleRate);
+    void prepare (double sampleRate, Focus focus = Focus::smooth);
     void reset() noexcept;
+
+    /** Jumps every glide to its target at once (for a chain that is about to fade in). */
+    void snapToTargets() noexcept;
+
+    /** Delta / input monitoring; switches glide in ~20 ms. */
+    void setListen (Listen) noexcept;
 
     const BellBank& bank() const noexcept   { return bells; }
 
@@ -73,7 +83,10 @@ private:
 
     BellArray eqTarget {}, spaceTarget {}, transferTarget {}, eqNow {}, spaceNow {}, transferNow {};
     SpaceMode mode = SpaceMode::spread;
-    float panTarget = 1.0f, panNow = 1.0f, glideCoeff = 0.9f, modeCoeff = 0.9f;
+    float panTarget = 1.0f, panNow = 1.0f, glideCoeff = 0.9f, modeCoeff = 0.9f, listenCoeff = 0.9f;
+
+    // Output = dry * a + after-Space * b + after-EQ * c (Delta and input monitoring).
+    std::array<float, 3> listenTarget { 0.0f, 0.0f, 1.0f }, listenNow { 0.0f, 0.0f, 1.0f }, listenPrev { 0.0f, 0.0f, 1.0f };
 
     // Mode crossfade: how much of the Spread / Pan Away / Decorrelate signal is used now.
     std::array<float, 3> modeMix { 1.0f, 0.0f, 0.0f };
