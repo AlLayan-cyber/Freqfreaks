@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "TrackEditor.h"
 #include "../common/ScalingEditor.h"
+#include "../common/Brand.h"
 
 namespace ff
 {
@@ -550,6 +551,7 @@ void TrackEditor::resized()
 {
     auto r = getLocalBounds();
     header = r.removeFromTop (64);
+    footer = r.removeFromBottom (28);
 
     // Header controls.
     colourDot.setBounds (206, 22, 20, 20);
@@ -656,6 +658,7 @@ void TrackEditor::resized()
 void TrackEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
+    brand::drawFooter (g, footer, "FreqFreaks Track");
 
     // Header.
     g.setColour (theme::headerBg);
@@ -905,9 +908,8 @@ void TrackEditor::updateHelp()
     }
     else
     {
-        title = u8 ("Подсказка");
-        text = u8 ("Наведи мышь на ручку — тут будет подсказка.\n"
-                   "Simple — Amount, Space Amount, бюджет.\n"
+        title = u8 ("Подсказка · наведи мышь на ручку");
+        text = u8 ("Simple — Amount, Space Amount, бюджет.\n"
                    "Detail — плюс спектр, волна, Атака/Релиз, Focus.\n"
                    "Expert — все настройки: EQ, Range, Bass Mono…\n"
                    "Link — EQ добирает то, что не успел Space.");

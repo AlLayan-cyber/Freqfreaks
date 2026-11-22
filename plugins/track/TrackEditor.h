@@ -114,7 +114,7 @@ private:
     ParamRow eqDepth, rangeLow, rangeHigh, bassMono, monoSafety, sensitivity;
 
     // Layout rectangles used by paint().
-    juce::Rectangle<int> header, spectrumCard, budgetCard, knobCard, drawer, amountArea, spaceArea;
+    juce::Rectangle<int> header, footer, spectrumCard, budgetCard, knobCard, drawer, amountArea, spaceArea;
     juce::Rectangle<int> eqCard, spaceCard, detectCard, helpArea;
     juce::String helpTitle, helpText;
     juce::Colour shownRefColour { theme::reference };

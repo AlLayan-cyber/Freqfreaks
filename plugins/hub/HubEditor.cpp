@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "HubEditor.h"
 #include "../common/ScalingEditor.h"
+#include "../common/Brand.h"
 
 #include <map>
 
@@ -843,6 +844,7 @@ void HubEditor::resized()
 {
     auto r = getLocalBounds();
     topBar = r.removeFromTop (68);
+    footer = r.removeFromBottom (28);
 
     totalSlider.setBounds (370, 22, 220, 24);
     spaceSlider.setBounds (720, 22, 220, 24);
@@ -882,6 +884,7 @@ void HubEditor::resized()
 void HubEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
+    brand::drawFooter (g, footer, "FreqFreaks Hub");
 
     // Top bar.
     g.setColour (theme::headerBg);
