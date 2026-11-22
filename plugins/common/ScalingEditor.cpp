@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ScalingEditor.h"
 #include "Theme.h"
+#include "AboutPanel.h"
 
 namespace ff
 {
@@ -21,9 +22,10 @@ namespace
 }
 
 ScalingEditor::ScalingEditor (juce::AudioProcessor& p, std::unique_ptr<juce::Component> c, int w, int h,
-                              juce::String settingsKey, float savedScale, std::function<void (float)> callback)
+                              juce::String settingsKey, float savedScale, std::function<void (float)> callback,
+                              juce::String productName)
     : AudioProcessorEditor (p), content (std::move (c)), baseW (w), baseH (h),
-      key (std::move (settingsKey)), onScaleChanged (std::move (callback))
+      key (std::move (settingsKey)), product (std::move (productName)), onScaleChanged (std::move (callback))
 {
     addAndMakeVisible (*content);
     content->setBounds (0, 0, baseW, baseH);
@@ -76,6 +78,11 @@ void ScalingEditor::setScale (float s)
 void ScalingEditor::showScaleMenu()
 {
     juce::PopupMenu menu;
+    menu.addItem (theme::u8 ("О плагине и лицензия…"), [safe = juce::Component::SafePointer<ScalingEditor> (this)] {
+        if (safe != nullptr)
+            safe->showAbout();
+    });
+    menu.addSeparator();
     menu.addSectionHeader (theme::u8 ("Размер окна"));
     for (int pct : { 75, 100, 125, 150, 200 })
     {
@@ -92,6 +99,15 @@ void ScalingEditor::showScaleMenu()
     menu.addSeparator();
     menu.addItem (theme::u8 ("Тяни за правый нижний угол — любой размер"), false, false, nullptr);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+}
+
+void ScalingEditor::showAbout()
+{
+    about = std::make_unique<AboutPanel> (product);
+    about->onClose = [this] { about.reset(); };
+    content->addAndMakeVisible (*about);   // inside the scaled content: it scales with the window
+    about->setBounds (content->getLocalBounds());
+    about->grabKeyboardFocus();
 }
 
 void ScalingEditor::showMenuFor (juce::Component& inside)

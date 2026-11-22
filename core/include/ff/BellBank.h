@@ -20,12 +20,15 @@ using BellArray = std::array<float, kNumBells>;
 constexpr int kSharpSteps = 5;
 constexpr int bellsForStep (int step) noexcept { return 16 + 4 * (step < 0 ? 0 : (step >= kSharpSteps ? kSharpSteps - 1 : step)); }
 
-/** Sharp knob 0..1 -> step: exactly 0 is step 0 (as before), anything above uses steps 1..4. */
+/** Sharp knob 0..1 -> step: exactly 0 is step 0 (as before); up to 50 % the bells narrow
+    in steps 1..4; above 50 % step 4 stays and the narrow mode (moving bells) takes over. */
 constexpr int sharpStepFor (float sharp01) noexcept
 {
     if (sharp01 <= 0.0f)
         return 0;
-    const int s = (int) (sharp01 * (float) (kSharpSteps - 1) + 0.999f);
+    if (sharp01 >= 0.5f)
+        return kSharpSteps - 1;
+    const int s = (int) (sharp01 * 2.0f * (float) (kSharpSteps - 1) + 0.999f);
     return s < 1 ? 1 : (s > kSharpSteps - 1 ? kSharpSteps - 1 : s);
 }
 

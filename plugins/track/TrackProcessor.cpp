@@ -180,7 +180,8 @@ TrackParams TrackProcessor::readParams() const noexcept
     p.spaceComp     = raw.spaceComp->load() > 0.5f;
     p.attackMs      = raw.attackManual->load() > 0.5f ? raw.attack->load() : 0.0f;
     p.releaseMs     = raw.releaseManual->load() > 0.5f ? raw.release->load() : 0.0f;
-    p.sharpStep     = sharpStepFor (raw.sharp->load() / 100.0f);
+    p.sharp         = juce::jlimit (0.0f, 1.0f, raw.sharp->load() / 100.0f);
+    p.sharpStep     = sharpStepFor (p.sharp);
     // Reference modes are mixed in here, after the engine: for the engine they are "normal".
     const int mode = listen.load();
     p.listen        = (Listen) (mode <= 4 ? juce::jmax (0, mode) : 0);
@@ -260,6 +261,8 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
         {
             ref.valid = true;
             std::copy (std::begin (refData.levelMidDb), std::end (refData.levelMidDb), ref.midDb.begin());
+            std::copy (std::begin (refData.fineMidDb), std::end (refData.fineMidDb), ref.fineMidDb.begin());
+            ref.hasFine = true;
             lastReference = ref;
             lastReferenceId = refId;
             lastReferenceMs = now;
@@ -342,6 +345,13 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
     d.spaceMode = (std::uint32_t) params.spaceMode;
     d.hubTrim = trim;
     d.sharpStep = (std::uint32_t) engine.sharpStep();
+    for (int k = 0; k < kNumPeaks; ++k)
+    {
+        d.peakHz[k] = engine.peaks()[(size_t) k].hz;
+        d.peakDb[k] = engine.peaks()[(size_t) k].cutDb;
+        d.peakQ[k] = engine.peaks()[(size_t) k].q;
+    }
+    std::copy (engine.ownFineMidDb().begin(), engine.ownFineMidDb().end(), d.fineMidDb);
     d.listen = (std::uint32_t) params.listen;
     d.flags = (params.bypass ? bus::flagBypassed : 0u) | (referenceLost ? bus::flagReferenceLost : 0u)
             | (params.link ? 0u : bus::flagLinkOff) | (hubOff ? bus::flagHubBypassed : 0u);
@@ -619,7 +629,7 @@ void TrackProcessor::setStateInformation (const void* data, int sizeInBytes)
 juce::AudioProcessorEditor* TrackProcessor::createEditor()
 {
     return new ScalingEditor (*this, std::make_unique<TrackEditor> (*this), TrackEditor::kWidth, TrackEditor::kHeight,
-                              "trackScale", editorScale(), [this] (float s) { setEditorScale (s); });
+                              "trackScale", editorScale(), [this] (float s) { setEditorScale (s); }, "FreqFreaks Track");
 }
 
 } // namespace ff

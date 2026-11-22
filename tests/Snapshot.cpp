@@ -136,6 +136,9 @@ int main (int argc, char** argv)
             ok &= scaling->getContent().getWidth() == ff::TrackEditor::kWidth;
             std::printf ("scale %.2f -> %.2f\n", before, scaling->getScale());
             scaling->setScale (before);
+            scaling->setSize (ff::TrackEditor::kWidth, ff::TrackEditor::kHeight);
+            scaling->showAbout();
+            ok &= save (*editor, outDir.getChildFile ("about.png"));
         }
     }
     // Hub: guitar trimmed to 60 %, pad bypassed from the Hub.

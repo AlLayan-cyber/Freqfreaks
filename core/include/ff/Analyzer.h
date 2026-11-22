@@ -32,6 +32,10 @@ public:
     const BandArray& midDb() const noexcept   { return mid; }
     const BandArray& sideDb() const noexcept  { return side; }
 
+    /** The same spectrum at fine resolution (narrow Sharp mode). */
+    const FineArray& fineMidDb() const noexcept   { return fineMid; }
+    const FineArray& fineSideDb() const noexcept  { return fineSide; }
+
     int hopSize() const noexcept              { return hop; }
     double frameRateHz() const noexcept       { return rate / (double) hop; }
 
@@ -43,9 +47,11 @@ private:
     Fft fft;
     std::vector<float> window, ringMid, ringSide;
     std::vector<std::complex<float>> scratch;
-    std::vector<int> bandFirstBin, bandLastBin;
+    std::vector<int> bandFirstBin, bandLastBin, fineFirstBin, fineLastBin;
+    std::vector<float> binMid, binSide;   // per-bin power of the last frame
     float norm = 1.0f;
     BandArray mid {}, side {};
+    FineArray fineMid {}, fineSide {};
 };
 
 } // namespace ff

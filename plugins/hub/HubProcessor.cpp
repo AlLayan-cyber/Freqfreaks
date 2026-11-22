@@ -236,7 +236,7 @@ void HubProcessor::setStateInformation (const void* data, int sizeInBytes)
 juce::AudioProcessorEditor* HubProcessor::createEditor()
 {
     return new ScalingEditor (*this, std::make_unique<HubEditor> (*this), HubEditor::kWidth, HubEditor::kHeight,
-                              "hubScale", editorScale.load(), [this] (float s) { editorScale = s; });
+                              "hubScale", editorScale.load(), [this] (float s) { editorScale = s; }, "FreqFreaks Hub");
 }
 
 } // namespace ff

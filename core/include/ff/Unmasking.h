@@ -59,6 +59,16 @@ Budget splitBudget (const BandArray& needDb, const BudgetSettings& settings) noe
 
 //==============================================================================
 /** Per-band attack/release smoothing in the dB domain, run once per analysis frame. */
+/** The same masking need at fine resolution (narrow Sharp mode): where exactly inside the
+    analysis bands the reference is masked. The masker spreads with the same slopes per ERB
+    as computeNeed(), and the reference's narrow-band power is scaled to a coarse band's
+    width, so levels compare like the coarse ones. Only the shape is used (to place narrow bells); the depth still
+    comes from the release budget. */
+FineArray computeFineNeed (const FineArray& targetMidDb,
+                           const FineArray& targetSideDb,
+                           const FineArray& referenceMidDb,
+                           const MaskingSettings& settings) noexcept;
+
 class BandSmoother
 {
 public:

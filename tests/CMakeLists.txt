@@ -33,16 +33,19 @@ if (FREQFREAKS_BUILD_PLUGINS)
         ${PROJECT_SOURCE_DIR}/plugins/track/TrackProcessor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/TrackEditor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/TimingKnob.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/track/RangeView.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/HostTrackInfo.cpp
         ${PROJECT_SOURCE_DIR}/plugins/hub/HubProcessor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/hub/HubEditor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/common/BandViews.cpp
         ${PROJECT_SOURCE_DIR}/plugins/common/LookAndFeel.cpp
-        ${PROJECT_SOURCE_DIR}/plugins/common/ScalingEditor.cpp)
+        ${PROJECT_SOURCE_DIR}/plugins/common/ScalingEditor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/common/AboutPanel.cpp)
     target_include_directories (freqfreaks_snapshot PRIVATE ${PROJECT_SOURCE_DIR}/plugins)
     target_compile_definitions (freqfreaks_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries (freqfreaks_snapshot PRIVATE
         freqfreaks_core
+        FreqFreaksLicence
         juce::juce_audio_utils
         juce::juce_recommended_config_flags)
 endif()
@@ -55,14 +58,17 @@ if (FREQFREAKS_BUILD_PLUGINS)
         ${PROJECT_SOURCE_DIR}/plugins/track/TrackProcessor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/TrackEditor.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/TimingKnob.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/track/RangeView.cpp
         ${PROJECT_SOURCE_DIR}/plugins/track/HostTrackInfo.cpp
         ${PROJECT_SOURCE_DIR}/plugins/common/BandViews.cpp
         ${PROJECT_SOURCE_DIR}/plugins/common/LookAndFeel.cpp
-        ${PROJECT_SOURCE_DIR}/plugins/common/ScalingEditor.cpp)
+        ${PROJECT_SOURCE_DIR}/plugins/common/ScalingEditor.cpp
+        ${PROJECT_SOURCE_DIR}/plugins/common/AboutPanel.cpp)
     target_include_directories (freqfreaks_studio_one_name PRIVATE ${PROJECT_SOURCE_DIR}/plugins)
     target_compile_definitions (freqfreaks_studio_one_name PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries (freqfreaks_studio_one_name PRIVATE
         freqfreaks_core
+        FreqFreaksLicence
         juce::juce_audio_utils
         juce::juce_recommended_config_flags)
     add_test (NAME studio-one-name COMMAND freqfreaks_studio_one_name)

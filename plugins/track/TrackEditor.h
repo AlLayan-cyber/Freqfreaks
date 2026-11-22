@@ -5,6 +5,7 @@
 
 #include "TrackProcessor.h"
 #include "TimingKnob.h"
+#include "RangeView.h"
 #include "../common/BandViews.h"
 #include "../common/LookAndFeel.h"
 
@@ -113,10 +114,11 @@ private:
     float shownCompensationDb = 0.0f;
 
     ParamRow eqDepth, rangeLow, rangeHigh, bassMono, monoSafety, sensitivity;
+    RangeView rangeView { processor };   // Range and Bass Mono as a small EQ window (Expert)
 
     // Layout rectangles used by paint().
     juce::Rectangle<int> header, footer, spectrumCard, budgetCard, knobCard, drawer, amountArea, spaceArea;
-    juce::Rectangle<int> eqCard, spaceCard, detectCard, helpArea;
+    juce::Rectangle<int> eqCard, spaceCard, detectCard, freqCard, helpArea;
     juce::String helpTitle, helpText;
     juce::Colour shownRefColour { theme::reference };
     juce::String shownRefName;

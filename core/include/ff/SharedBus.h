@@ -5,6 +5,7 @@
 
 #include "ff/Bands.h"
 #include "ff/BellBank.h"
+#include "ff/StereoProcessor.h"
 
 #include <atomic>
 #include <cstdint>
@@ -23,7 +24,7 @@ namespace ff
 namespace bus
 {
     constexpr std::uint32_t kMagic   = 0x46524551;   // "FREQ"
-    constexpr std::uint32_t kVersion = 4;   // bump on any layout change
+    constexpr std::uint32_t kVersion = 5;   // bump on any layout change
     constexpr int kMaxSlots = 64;
     constexpr int kNameLength = 48;
     constexpr int kMaxReferences = 4;
@@ -55,6 +56,10 @@ namespace bus
         float hubTrim = 1.0f;                           // the Hub's trim this track is applying
         std::uint32_t flags = 0;                        // see TrackFlags
         std::uint32_t sharpStep = 0;                    // bell layout of eqBells/spaceBells (Sharp step)
+        float peakHz[kNumPeaks] {};                     // narrow Sharp mode: the moving bells
+        float peakDb[kNumPeaks] {};
+        float peakQ[kNumPeaks] {};
+        float fineMidDb[kFineBands] {};                 // fine spectrum, for tracks that yield to this one
         std::uint32_t listen = 0;                       // monitoring (ff::Listen), 0 = normal
     };
 

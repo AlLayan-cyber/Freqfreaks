@@ -7,6 +7,8 @@
 #include "ff/StereoProcessor.h"
 #include "ff/Unmasking.h"
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace ff
@@ -31,6 +33,7 @@ struct TrackParams
     float panSign       = 1.0f;     ///< Pan Away direction: +1 left, -1 right
     bool  bypass        = false;
     int   sharpStep     = 0;        ///< Sharp knob step (see sharpStepFor); 0 = the original sound
+    float sharp         = 0.0f;     ///< the Sharp knob, 0..1; above 0.5 the narrow mode is on
     Listen listen       = Listen::normal;
 
     float outputDb      = 0.0f;     ///< manual output trim, -12..+12 dB
@@ -46,7 +49,13 @@ struct ReferenceSnapshot
 {
     bool valid = false;
     BandArray midDb {};
+    bool hasFine = false;           ///< fine spectrum present (for the narrow Sharp mode)
+    FineArray fineMidDb {};
 };
+
+/** Narrow Sharp mode: the knob from 50 % to 100 % gives Q 4 .. 16 to the moving bells. */
+constexpr bool isNarrowSharp (float sharp01) noexcept   { return sharp01 > 0.5f; }
+inline float narrowQFor (float sharp01) noexcept         { return 4.0f * std::pow (4.0f, std::clamp ((sharp01 - 0.5f) * 2.0f, 0.0f, 1.0f)); }
 
 /** The complete per-track signal chain:
     analysis -> masking need -> smoothing -> budget -> bell fit -> lookahead delay -> Space + EQ.
@@ -71,6 +80,9 @@ public:
     const Budget& budget() const noexcept               { return currentBudget; }
     const BellArray& eqBells() const noexcept           { return eqGains[(size_t) active]; }
     const BellArray& spaceBells() const noexcept        { return spaceGains[(size_t) active]; }
+    const PeakArray& peaks() const noexcept             { return chains[(size_t) active].currentPeaks(); }
+    const FineArray& ownFineMidDb() const noexcept      { return analyzer.fineMidDb(); }
+    const FineArray& fineNeed() const noexcept          { return fineSmoothed; }
     const StereoProcessor& processor() const noexcept   { return chains[(size_t) active]; }
     int sharpStep() const noexcept                      { return active; }
     bool isSharpFading() const noexcept                 { return fadeFrom >= 0 || work.chain >= 0; }
@@ -95,6 +107,12 @@ private:
     void startWork (int chain, const TrackParams& params, int passes, bool switching) noexcept;
     void runWork (int maxStages) noexcept;
     void commitWork() noexcept;
+    void updatePeaks (const TrackParams&, const ReferenceSnapshot&) noexcept;
+
+    // Narrow Sharp mode.
+    FineArray fineSmoothed {};
+    PeakArray peakTargets {};
+    std::array<int, kNumBands> finePerBand {};
     void processChains (float* left, float* right, int numSamples) noexcept;
 
     double rate = 48000.0;

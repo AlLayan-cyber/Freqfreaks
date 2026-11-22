@@ -7,6 +7,8 @@
 
 #include <functional>
 
+namespace ff { class AboutPanel; }
+
 namespace ff
 {
 
@@ -30,7 +32,11 @@ public:
     static float fitToScreen (int baseWidth, int baseHeight);
 
     ScalingEditor (juce::AudioProcessor&, std::unique_ptr<juce::Component> content, int baseWidth, int baseHeight,
-                   juce::String settingsKey, float savedScale, std::function<void (float)> onScaleChanged);
+                   juce::String settingsKey, float savedScale, std::function<void (float)> onScaleChanged,
+                   juce::String productName = "FreqFreaks");
+
+    /** Opens the About panel (developer, version, licence) over the UI. */
+    void showAbout();
     ~ScalingEditor() override;
 
     juce::Component& getContent() noexcept          { return *content; }
@@ -53,8 +59,9 @@ private:
     static void storeDefault (const juce::String& key, float);
 
     std::unique_ptr<juce::Component> content;
+    std::unique_ptr<AboutPanel> about;   // after content: destroyed first, while its parent still exists
     const int baseW, baseH;
-    const juce::String key;
+    const juce::String key, product;
     std::function<void (float)> onScaleChanged;
     float scale = 1.0f;
 

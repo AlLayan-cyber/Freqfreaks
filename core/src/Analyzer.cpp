@@ -58,6 +58,21 @@ void Analyzer::prepare (double sampleRate)
         bandLastBin[(size_t) b] = last;
     }
 
+    const auto& fine = FineLayout::get();
+    fineFirstBin.assign (kFineBands, 0);
+    fineLastBin.assign (kFineBands, 0);
+    for (int b = 0; b < kFineBands; ++b)
+    {
+        int first = std::clamp ((int) std::ceil (fine.edgeHz[(size_t) b] / binHz), 1, maxBin);
+        int last  = std::clamp ((int) std::ceil (fine.edgeHz[(size_t) b + 1] / binHz) - 1, 1, maxBin);
+        if (last < first)
+            first = last = std::clamp ((int) std::lround (fine.centreHz[(size_t) b] / binHz), 1, maxBin);
+        fineFirstBin[(size_t) b] = first;
+        fineLastBin[(size_t) b] = last;
+    }
+    binMid.assign ((size_t) fftSize / 2, 0.0f);
+    binSide.assign ((size_t) fftSize / 2, 0.0f);
+
     reset();
 }
 
@@ -69,6 +84,8 @@ void Analyzer::reset() noexcept
     samplesSinceFrame = 0;
     mid.fill (kSilenceDb);
     side.fill (kSilenceDb);
+    fineMid.fill (kSilenceDb);
+    fineSide.fill (kSilenceDb);
 }
 
 int Analyzer::process (const float* left, const float* right, int numSamples) noexcept
@@ -104,20 +121,41 @@ void Analyzer::analyseFrame() noexcept
 
     fft.forward (scratch.data());
 
+    // Per-bin Mid and Side power (the same arithmetic as before, kept per bin so the
+    // coarse and the fine bands are summed from it).
+    const int maxBin = fftSize / 2 - 1;
+    for (int k = 1; k <= maxBin; ++k)
+    {
+        const auto z  = scratch[(size_t) k];
+        const auto zc = std::conj (scratch[(size_t) (fftSize - k)]);
+        const auto xm = 0.5f * (z + zc);                                   // spectrum of Mid
+        const auto xs = std::complex<float> (0.0f, -0.5f) * (z - zc);      // spectrum of Side
+        binMid[(size_t) k] = std::norm (xm);
+        binSide[(size_t) k] = std::norm (xs);
+    }
+
     for (int b = 0; b < kNumBands; ++b)
     {
         double pm = 0.0, ps = 0.0;
         for (int k = bandFirstBin[(size_t) b]; k <= bandLastBin[(size_t) b]; ++k)
         {
-            const auto z  = scratch[(size_t) k];
-            const auto zc = std::conj (scratch[(size_t) (fftSize - k)]);
-            const auto xm = 0.5f * (z + zc);                                   // spectrum of Mid
-            const auto xs = std::complex<float> (0.0f, -0.5f) * (z - zc);      // spectrum of Side
-            pm += (double) std::norm (xm);
-            ps += (double) std::norm (xs);
+            pm += (double) binMid[(size_t) k];
+            ps += (double) binSide[(size_t) k];
         }
         mid[(size_t) b]  = powerToDb ((float) (pm / norm));
         side[(size_t) b] = powerToDb ((float) (ps / norm));
+    }
+
+    for (int b = 0; b < kFineBands; ++b)
+    {
+        double pm = 0.0, ps = 0.0;
+        for (int k = fineFirstBin[(size_t) b]; k <= fineLastBin[(size_t) b]; ++k)
+        {
+            pm += (double) binMid[(size_t) k];
+            ps += (double) binSide[(size_t) k];
+        }
+        fineMid[(size_t) b]  = powerToDb ((float) (pm / norm));
+        fineSide[(size_t) b] = powerToDb ((float) (ps / norm));
     }
 }
 

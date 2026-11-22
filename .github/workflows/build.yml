@@ -59,6 +59,7 @@ jobs:
             [ -d "$art/Standalone" ] && mkdir -p dist/Standalone && cp -R "$art/Standalone/." dist/Standalone/ || true
           done
           rm -f dist/*.exp dist/*.lib   # MSVC import libraries, not needed by hosts
+          cp LICENSE dist/LICENSE.txt   # GPLv3: the licence travels with the plug-ins
           ls -la dist
 
       - uses: actions/upload-artifact@v4

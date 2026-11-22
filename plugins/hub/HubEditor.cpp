@@ -4,6 +4,7 @@
 #include "HubEditor.h"
 #include "../common/ScalingEditor.h"
 #include "../common/Brand.h"
+#include "../common/AboutPanel.h"
 
 #include <map>
 
@@ -884,7 +885,7 @@ void HubEditor::resized()
 void HubEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
-    brand::drawFooter (g, footer, "FreqFreaks Hub");
+    brand::drawFooter (g, footer, "FreqFreaks Hub v" + AboutPanel::version() + "  ·  GPLv3");
 
     // Top bar.
     g.setColour (theme::headerBg);

@@ -477,7 +477,7 @@ void testClicks()
         { "Auto gain on",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.autoGain = true; } },
         { "Output +6 dB",              [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.outputDb = 6.0f; } },
         { "reference lost",            [] (ff::TrackParams&, ff::ReferenceSnapshot& r) { r.valid = false; } },
-        { "Sharp 0 -> 100 %",          [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.sharpStep = ff::sharpStepFor (1.0f); } },
+        { "Sharp 0 -> 100 % (narrow)", [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.sharp = 1.0f; p.sharpStep = ff::sharpStepFor (1.0f); } },
         { "Sharp 0 -> 30 %",           [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.sharpStep = ff::sharpStepFor (0.3f); } },
         { "Delta on",                  [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::deltaAll; } },
         { "Delta EQ only",             [] (ff::TrackParams& p, ff::ReferenceSnapshot&) { p.listen = ff::Listen::deltaEq; } },
@@ -621,6 +621,65 @@ void testDelta()
     }
 }
 
+/** Reference: a narrow vocal-like peak at 2.5 kHz over a quiet bed; track: broadband noise.
+    Returns the EQ cut (dB) the track gets at the given frequencies. */
+std::vector<double> narrowCut (float sharp, const std::vector<double>& freqs)
+{
+    const int block = 256, n = 48000 * 4;
+    // The reference's analysis, as its own plug-in would publish it.
+    ff::Analyzer refAnalyzer;
+    refAnalyzer.prepare (kRate);
+    {
+        // A quiet tone the track's noise masks, over a bed far below the reference's presence floor.
+        auto bed = noise (n, 5, 0.0003f);
+        for (int i = 0; i < n; ++i)
+            bed[(size_t) i] += 0.02f * (float) std::sin (2.0 * kPi * 2500.0 * i / kRate);
+        refAnalyzer.process (bed.data(), bed.data(), n);
+    }
+    ff::ReferenceSnapshot ref;
+    ref.valid = true;
+    ref.midDb = refAnalyzer.midDb();
+    ref.hasFine = true;
+    ref.fineMidDb = refAnalyzer.fineMidDb();
+
+    ff::TrackEngine e;
+    e.prepare (kRate, block);
+    ff::TrackParams p;
+    p.amount = 1.0f;
+    p.speed = 0.6f;
+    p.spaceAmount = 0.0f;      // EQ only, to see the shape of the cut
+    p.spaceComp = false;
+    p.sharp = sharp;
+    p.sharpStep = ff::sharpStepFor (sharp);
+    const auto src = noise (n, 6, 0.25f);
+    auto l = src, r = src;
+    for (int i = 0; i < n; i += block)
+        e.process (l.data() + i, r.data() + i, block, p, ref);
+
+    std::vector<double> out;
+    const int lat = e.latencySamples();
+    std::vector<float> dry ((size_t) n);
+    for (int i = lat; i < n; ++i)
+        dry[(size_t) i] = src[(size_t) (i - lat)];
+    for (double hz : freqs)
+        out.push_back (10.0 * std::log10 (bandPower (dry, hz, 12.0, n / 2) / bandPower (l, hz, 12.0, n / 2)));
+    return out;
+}
+
+void testNarrowSharp()
+{
+    const std::vector<double> freqs { 2500.0, 2500.0 / 1.414, 2500.0 * 1.414, 1000.0, 6000.0 };
+    const auto broad = narrowCut (0.45f, freqs);   // widest fixed-bank step (32 bells)
+    const auto narrow = narrowCut (1.0f, freqs);   // narrow mode, Q 16
+    std::printf ("  info: Sharp 45 %%: cut %.1f dB at 2.5 kHz, %.1f / %.1f dB half an octave away\n", broad[0], broad[1], broad[2]);
+    std::printf ("  info: Sharp 100 %%: cut %.1f dB at 2.5 kHz, %.1f / %.1f dB half an octave away, %.1f / %.1f dB at 1 / 6 kHz\n",
+                 narrow[0], narrow[1], narrow[2], narrow[3], narrow[4]);
+    CHECK (narrow[0] > 3.0);                          // the conflict itself is cut
+    CHECK (narrow[1] < 0.6 && narrow[2] < 0.6);       // half an octave away almost nothing
+    CHECK (narrow[3] < 0.3 && narrow[4] < 0.3);       // and far away nothing
+    CHECK (narrow[1] + narrow[2] < broad[1] + broad[2]);   // narrower than the widest fixed step
+}
+
 void testSharpZeroAsBefore()
 {
     // Output of versions 18 and 19 (before the Sharp knob, identical) for a fixed input. At Sharp 0 the
@@ -698,7 +757,7 @@ void testCpu()
     ref.valid = true;
     for (auto& x : ref.midDb)
         x = -36.0f;
-    for (int step : { 0, ff::kSharpSteps - 1 })
+    for (int step : { 0, ff::kSharpSteps - 1, ff::kSharpSteps })   // kSharpSteps = the narrow mode
     {
         const int block = 32, n = 48000 * 2, blocks = n / block;
         std::vector<double> best ((size_t) blocks, 1.0e9);
@@ -709,7 +768,10 @@ void testCpu()
             e.prepare (kRate, block);
             ff::TrackParams p;
             p.amount = 1.0f;
-            p.sharpStep = step;
+            p.sharpStep = std::min (step, ff::kSharpSteps - 1);
+            p.sharp = step == ff::kSharpSteps ? 1.0f : 0.0f;
+            ref.hasFine = true;
+            ref.fineMidDb.fill (-36.0f);
             auto l = src, r = src;
             for (int b = 0; b < blocks; ++b)
             {
@@ -1140,6 +1202,7 @@ int main()
         { "loudness compensation", testLoudness },
         { "no clicks on switches", testClicks },
         { "sharp", testSharp },
+        { "narrow sharp", testNarrowSharp },
         { "sharp 0 sounds as before", testSharpZeroAsBefore },
         { "cpu load", testCpu },
         { "delta monitoring", testDelta },

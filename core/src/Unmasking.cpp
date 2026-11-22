@@ -54,6 +54,74 @@ BandArray computeNeed (const BandArray& targetMidDb,
     return need;
 }
 
+FineArray computeFineNeed (const FineArray& targetMidDb,
+                           const FineArray& targetSideDb,
+                           const FineArray& referenceMidDb,
+                           const MaskingSettings& s) noexcept
+{
+    const auto& fine = FineLayout::get();
+
+    // Spreading factors between fine bands, from the coarse slopes per ERB (the slopes are
+    // the defaults in practice; recomputed only if they change).
+    struct Spread
+    {
+        float up = -1.0f, down = -1.0f;
+        std::array<std::array<float, kFineBands>, kFineBands> factor {};
+        std::array<float, kFineBands> widthDb {};   // fine band width against a coarse band, dB
+    };
+    static thread_local Spread spread;
+    if (spread.up != s.upwardSlopeDb || spread.down != s.downwardSlopeDb)
+    {
+        const auto& layout = BandLayout::get();
+        const float erbPerBand = (hzToErbRate (layout.centreHz[kNumBands - 1]) - hzToErbRate (layout.centreHz[0]))
+                                 / (float) (kNumBands - 1);
+        for (int b = 0; b < kFineBands; ++b)
+            for (int j = 0; j < kFineBands; ++j)
+            {
+                const float d = (fine.erbRate[(size_t) b] - fine.erbRate[(size_t) j]) / erbPerBand;   // in coarse bands
+                const float attenuation = d >= 0.0f ? s.upwardSlopeDb * d : s.downwardSlopeDb * -d;
+                spread.factor[(size_t) b][(size_t) j] = attenuation < 90.0f ? std::pow (10.0f, -attenuation / 10.0f) : 0.0f;
+            }
+        for (int b = 0; b < kFineBands; ++b)
+        {
+            const float width = (fine.erbRate[(size_t) std::min (b + 1, kFineBands - 1)]
+                                 - fine.erbRate[(size_t) std::max (b - 1, 0)])
+                                * (b == 0 || b == kFineBands - 1 ? 1.0f : 0.5f) / erbPerBand;
+            spread.widthDb[(size_t) b] = 10.0f * std::log10 (std::max (width, 1.0e-3f));
+        }
+        spread.up = s.upwardSlopeDb;
+        spread.down = s.downwardSlopeDb;
+    }
+
+    const float sideFactor = dbToPower (s.sideContributionDb);
+    std::array<float, kFineBands> masker {};
+    for (int j = 0; j < kFineBands; ++j)
+        masker[(size_t) j] = dbToPower (targetMidDb[(size_t) j]) + sideFactor * dbToPower (targetSideDb[(size_t) j]);
+
+    float refMax = kSilenceDb;
+    for (auto v : referenceMidDb)
+        refMax = std::max (refMax, v);
+    const float presenceFloor = std::max (s.referenceFloorDb, refMax - s.referenceRangeDb);
+
+    FineArray need {};
+    for (int b = 0; b < kFineBands; ++b)
+    {
+        const float hz = fine.centreHz[(size_t) b];
+        const float ref = referenceMidDb[(size_t) b];
+        if (hz < s.rangeLowHz || hz > s.rangeHighHz || ref < presenceFloor)
+            continue;
+        float sum = 0.0f;
+        const auto& row = spread.factor[(size_t) b];
+        for (int j = 0; j < kFineBands; ++j)
+            sum += row[(size_t) j] * masker[(size_t) j];
+        // The masker summed over many narrow bands is a density per coarse band; bring the
+        // reference's narrow-band power to the same footing.
+        const float refDensity = ref - spread.widthDb[(size_t) b];
+        need[(size_t) b] = std::clamp (powerToDb (sum) + s.sensitivityDb - refDensity, 0.0f, s.maxNeedDb);
+    }
+    return need;
+}
+
 Budget splitBudget (const BandArray& needDb, const BudgetSettings& s) noexcept
 {
     const auto& layout = BandLayout::get();

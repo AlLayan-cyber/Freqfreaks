@@ -66,6 +66,43 @@ private:
 
 using BandArray = std::array<float, kNumBands>;
 
+/** Fine analysis for the narrow Sharp mode: 96 bands of ~1/11 octave from 40 Hz to 16 kHz,
+    so a narrow conflict shows up where it really is. (Below ~300 Hz the FFT's own
+    resolution is coarser than this; neighbouring fine bands then share bins.) */
+constexpr int kFineBands = 96;
+using FineArray = std::array<float, kFineBands>;
+
+struct FineLayout
+{
+    std::array<float, kFineBands>     centreHz {};
+    std::array<float, kFineBands + 1> edgeHz {};
+    std::array<int, kFineBands>       coarseBand {};   // the analysis band each fine band lies in
+    std::array<float, kFineBands>     erbRate {};
+
+    static const FineLayout& get() noexcept
+    {
+        static const FineLayout layout = make();
+        return layout;
+    }
+
+private:
+    static FineLayout make() noexcept
+    {
+        FineLayout l;
+        const float lo = std::log2 (40.0f), hi = std::log2 (16000.0f);
+        const float step = (hi - lo) / (float) (kFineBands - 1);
+        for (int b = 0; b < kFineBands; ++b)
+        {
+            l.centreHz[(size_t) b] = std::pow (2.0f, lo + step * (float) b);
+            l.coarseBand[(size_t) b] = BandLayout::get().bandForHz (l.centreHz[(size_t) b]);
+            l.erbRate[(size_t) b] = hzToErbRate (l.centreHz[(size_t) b]);
+        }
+        for (int b = 0; b <= kFineBands; ++b)
+            l.edgeHz[(size_t) b] = std::pow (2.0f, lo + step * ((float) b - 0.5f));
+        return l;
+    }
+};
+
 inline float dbToGain (float db) noexcept    { return std::pow (10.0f, db / 20.0f); }
 inline float gainToDb (float g) noexcept     { return 20.0f * std::log10 (g > 1.0e-9f ? g : 1.0e-9f); }
 inline float powerToDb (float p) noexcept    { return 10.0f * std::log10 (p > 1.0e-12f ? p : 1.0e-12f); }

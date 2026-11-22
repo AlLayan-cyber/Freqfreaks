@@ -54,6 +54,7 @@ void StereoProcessor::prepare (double sampleRate, int sharpStep)
     glideCoeff = (float) std::exp (-(double) kSubBlock / (0.030 * rate));
     modeCoeff = (float) std::exp (-(double) kSubBlock / (0.040 * rate));
     listenCoeff = (float) std::exp (-(double) kSubBlock / (0.020 * rate));
+    hzCoeff = (float) std::exp (-(double) kSubBlock / (0.060 * rate));
 
     for (int k = 0; k < bells.size(); ++k)
         bandpassCoeffs[(size_t) k] = BiquadCoeffs::bandpass (rate, bells.centreHz (k), bells.q (k));
@@ -79,7 +80,33 @@ void StereoProcessor::reset() noexcept
     panNow = panTarget;
     modeGainPrev = { modeMix[0], modeMix[1] * panNow, modeMix[2] };
     listenNow = listenPrev = listenTarget;
+    peakTarget = {};
+    peakNow = {};
+    for (auto& s : peakLeft) s.reset();
+    for (auto& s : peakRight) s.reset();
+    peakActive.fill (false);
+    anyPeak = false;
     updateCoefficients();
+}
+
+void StereoProcessor::updatePeaks() noexcept
+{
+    anyPeak = false;
+    for (int k = 0; k < kNumPeaks; ++k)
+    {
+        const auto i = (size_t) k;
+        const bool on = peakNow[i].cutDb > 1.0e-3f;
+        if (on && ! peakActive[i])
+        {
+            peakLeft[i].reset();
+            peakRight[i].reset();
+        }
+        peakActive[i] = on;
+        anyPeak = anyPeak || on;
+        if (on)
+            peakCoeffs[i] = BiquadCoeffs::peaking (rate, std::min ((double) peakNow[i].hz, rate * 0.45),
+                                                   peakNow[i].q, -peakNow[i].cutDb);
+    }
 }
 
 void StereoProcessor::snapToTargets() noexcept
@@ -93,7 +120,9 @@ void StereoProcessor::snapToTargets() noexcept
     constexpr float halfPi = 1.5707963267948966f;
     modeGainPrev = { std::sin (halfPi * modeMix[0]), std::sin (halfPi * modeMix[1]) * panNow, std::sin (halfPi * modeMix[2]) };
     listenNow = listenPrev = listenTarget;
+    peakNow = peakTarget;
     updateCoefficients();
+    updatePeaks();
 }
 
 void StereoProcessor::setListen (Listen l) noexcept
@@ -173,6 +202,27 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
         if (changed)
             updateCoefficients();
 
+        // Moving narrow bells: cut and Q glide like the gains, the centre glides in octaves.
+        bool peaksChanged = false;
+        for (int k = 0; k < kNumPeaks; ++k)
+        {
+            auto& now = peakNow[(size_t) k];
+            const auto& target = peakTarget[(size_t) k];
+            if (now.cutDb <= 1.0e-3f && target.cutDb > 0.0f)
+                now.hz = target.hz, now.q = target.q;   // a silent bell jumps to its new place
+            const float cut = target.cutDb + glideCoeff * (now.cutDb - target.cutDb);
+            const float oct = std::log2 (target.hz / now.hz);
+            const float hz = now.hz * std::exp2 ((1.0f - hzCoeff) * oct);
+            const float q = target.q + glideCoeff * (now.q - target.q);
+            if (std::abs (cut - now.cutDb) > 1.0e-4f || std::abs (oct) > 1.0e-4f || std::abs (q - now.q) > 1.0e-4f)
+                peaksChanged = true;
+            now.cutDb = cut < 1.0e-3f && target.cutDb <= 0.0f ? 0.0f : cut;
+            now.hz = hz;
+            now.q = q;
+        }
+        if (peaksChanged)
+            updatePeaks();
+
         for (int m = 0; m < 3; ++m)
         {
             const float target = m == (int) mode ? 1.0f : 0.0f;
@@ -236,6 +286,13 @@ void StereoProcessor::process (float* left, float* right, int numSamples) noexce
                     r = eqRight[(size_t) k].process (r, eqCoeffs[(size_t) k]);
                 }
             }
+            if (anyPeak)
+                for (int k = 0; k < kNumPeaks; ++k)
+                    if (peakActive[(size_t) k])
+                    {
+                        l = peakLeft[(size_t) k].process (l, peakCoeffs[(size_t) k]);
+                        r = peakRight[(size_t) k].process (r, peakCoeffs[(size_t) k]);
+                    }
             if (listenPlain)
             {
                 left[j] = l;

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace ff
 {
@@ -18,6 +19,9 @@ void TrackEngine::prepare (double sampleRate, int maxBlockSize)
     for (int f = 0; f < kSharpSteps; ++f)
         chains[(size_t) f].prepare (rate, f);
     fadeLength = std::max (1, (int) std::lround (0.050 * rate));
+    finePerBand.fill (0);
+    for (int f = 0; f < kFineBands; ++f)
+        ++finePerBand[(size_t) FineLayout::get().coarseBand[(size_t) f]];
     fadeLeft.assign ((size_t) std::max (64, maxBlockSize), 0.0f);
     fadeRight.assign (fadeLeft.size(), 0.0f);
 
@@ -38,6 +42,8 @@ void TrackEngine::reset() noexcept
     fadePos = 0;
     currentBudget = {};
     work = {};
+    fineSmoothed.fill (0.0f);
+    peakTargets = {};
     for (int f = 0; f < kSharpSteps; ++f)
     {
         eqGains[(size_t) f].fill (0.0f);
@@ -110,10 +116,137 @@ void TrackEngine::updateControl (const TrackParams& p, const ReferenceSnapshot& 
         startWork (active, p, 1, false);
     }
 
+    // Narrow Sharp mode: moving narrow bells on the conflicts (off: they fade out).
+    if (isNarrowSharp (p.sharp) || std::any_of (peakTargets.begin(), peakTargets.end(), [] (const PeakBell& b) { return b.cutDb > 0.0f; }))
+    {
+        updatePeaks (p, reference);
+        chains[(size_t) active].setPeaks (peakTargets);
+    }
+
     updateCompensation (p);
     for (auto& c : chains)
         c.setListen (p.listen);
     runWork (1);
+}
+
+void TrackEngine::updatePeaks (const TrackParams& p, const ReferenceSnapshot& reference) noexcept
+{
+    const bool on = isNarrowSharp (p.sharp) && referenceActive && reference.hasFine && ! p.bypass;
+    const auto& fine = FineLayout::get();
+
+    // Where exactly the conflict is: the masking need at fine resolution, smoothed in time
+    // with the same attack and release as the coarse release.
+    FineArray need {};
+    if (on)
+    {
+        MaskingSettings ms;
+        ms.sensitivityDb = p.sensitivityDb;
+        ms.rangeLowHz = p.rangeLowHz;
+        ms.rangeHighHz = p.rangeHighHz;
+        need = computeFineNeed (analyzer.fineMidDb(), analyzer.fineSideDb(), reference.fineMidDb, ms);
+    }
+    const double frameRate = analyzer.frameRateHz();
+    const float attack = (float) std::exp (-1.0 / (std::max (1.0f, smoother.attackMs()) * 0.001 * frameRate));
+    const float release = (float) std::exp (-1.0 / (std::max (1.0f, smoother.releaseMs()) * 0.001 * frameRate));
+    for (int f = 0; f < kFineBands; ++f)
+    {
+        auto& s = fineSmoothed[(size_t) f];
+        const float x = need[(size_t) f];
+        s = x + (x > s ? attack : release) * (s - x);
+    }
+
+    // Candidates: local peaks of the fine need, inside Range, in bands where the budget
+    // gives EQ release. Depth = that band's EQ release, more where the need concentrates
+    // (a narrow cut removes less, so it may go a little deeper), at most EQ Depth.
+    std::array<float, kNumBands> fineMean {};
+    for (int f = 0; f < kFineBands; ++f)
+        fineMean[(size_t) fine.coarseBand[(size_t) f]] += fineSmoothed[(size_t) f];
+    for (int b = 0; b < kNumBands; ++b)
+        fineMean[(size_t) b] /= (float) std::max (1, finePerBand[(size_t) b]);
+
+    std::array<std::pair<float, int>, kFineBands> candidates {};
+    int numCandidates = 0;
+    if (on)
+        for (int f = 1; f < kFineBands - 1; ++f)
+        {
+            const float v = fineSmoothed[(size_t) f];
+            const float hz = fine.centreHz[(size_t) f];
+            if (v < 0.3f || v < fineSmoothed[(size_t) f - 1] || v <= fineSmoothed[(size_t) f + 1]
+                || hz < p.rangeLowHz * 1.05f || hz > p.rangeHighHz / 1.05f)
+                continue;
+            const int b = fine.coarseBand[(size_t) f];
+            const float eq = currentBudget.eq[(size_t) b];
+            if (eq < 0.2f)
+                continue;
+            const float concentration = std::clamp (v / std::max (0.1f, fineMean[(size_t) b]), 1.0f, 2.0f);
+            candidates[(size_t) numCandidates++] = { std::min (p.eqDepthDb, eq * concentration), f };
+        }
+    std::sort (candidates.begin(), candidates.begin() + numCandidates,
+               [] (const auto& a, const auto& b) { return a.first > b.first; });
+
+    // Keep the strongest, at least a third of an octave apart.
+    std::array<std::pair<float, float>, kNumPeaks> chosen {};   // (cut, hz)
+    int numChosen = 0;
+    for (int c = 0; c < numCandidates && numChosen < kNumPeaks; ++c)
+    {
+        // Exact place: a parabola through the reference's level in the band and its neighbours
+        // (the reference is what must come through), between the two neighbouring centres.
+        const int f = candidates[(size_t) c].second;
+        const float a0 = reference.fineMidDb[(size_t) f - 1], a1 = reference.fineMidDb[(size_t) f], a2 = reference.fineMidDb[(size_t) f + 1];
+        const float denom = a0 - 2.0f * a1 + a2;
+        const float offset = denom < -1.0e-3f ? std::clamp (0.5f * (a0 - a2) / denom, -0.5f, 0.5f) : 0.0f;
+        const float hz = fine.centreHz[(size_t) f] * std::exp2 (offset * std::log2 (fine.centreHz[1] / fine.centreHz[0]));
+        bool clear = true;
+        for (int k = 0; k < numChosen; ++k)
+            clear = clear && std::abs (std::log2 (hz / chosen[(size_t) k].second)) >= 1.0f / 3.0f;
+        if (clear)
+            chosen[(size_t) numChosen++] = { candidates[(size_t) c].first, hz };
+    }
+
+    // Each conflict keeps its bell from frame to frame (nearest bell within ~1/3 octave), so
+    // bells glide after a moving conflict instead of jumping; new ones take a silent bell.
+    const float q = narrowQFor (p.sharp);
+    const auto& now = chains[(size_t) active].currentPeaks();
+    PeakArray next = peakTargets;
+    for (auto& b : next)
+        b.cutDb = 0.0f, b.q = q;
+    std::array<bool, kNumPeaks> taken {};
+    std::array<bool, kNumPeaks> placed {};
+    for (int c = 0; c < numChosen; ++c)
+    {
+        const float hz = chosen[(size_t) c].second;
+        int best = -1;
+        float bestDist = 0.34f;
+        for (int k = 0; k < kNumPeaks; ++k)
+        {
+            if (taken[(size_t) k] || peakTargets[(size_t) k].cutDb <= 0.0f)
+                continue;
+            const float d = std::abs (std::log2 (hz / peakTargets[(size_t) k].hz));
+            if (d < bestDist)
+                bestDist = d, best = k;
+        }
+        if (best >= 0)
+        {
+            taken[(size_t) best] = true;
+            next[(size_t) best].hz = hz;
+            next[(size_t) best].cutDb = chosen[(size_t) c].first;
+            placed[(size_t) c] = true;
+        }
+    }
+    for (int c = 0; c < numChosen; ++c)
+    {
+        if (placed[(size_t) c])
+            continue;
+        for (int k = 0; k < kNumPeaks; ++k)
+            if (! taken[(size_t) k] && peakTargets[(size_t) k].cutDb <= 0.0f && now[(size_t) k].cutDb < 0.05f)
+            {
+                taken[(size_t) k] = true;
+                next[(size_t) k].hz = chosen[(size_t) c].second;
+                next[(size_t) k].cutDb = chosen[(size_t) c].first;
+                break;
+            }
+    }
+    peakTargets = next;
 }
 
 void TrackEngine::startWork (int chain, const TrackParams& p, int passes, bool switching) noexcept
@@ -140,6 +273,8 @@ void TrackEngine::runWork (int maxStages) noexcept
         switch (work.stage % 4)
         {
             case 0:
+                if (isNarrowSharp (p.sharp))
+                    break;   // narrow mode: the EQ part is done by the moving bells
                 bank.fit (currentBudget.eq, BellBank::rangeWeights (p.rangeLowHz, p.rangeHighHz),
                           bank.bellsWithin (p.rangeLowHz * 1.1f, p.rangeHighHz / 1.1f), p.eqDepthDb, eq);
                 break;
@@ -168,7 +303,8 @@ void TrackEngine::commitWork() noexcept
     }
     else
     {
-        stereo.setTargets (eqGains[(size_t) work.chain], spaceGains[(size_t) work.chain],
+        BellArray zero {};
+        stereo.setTargets (isNarrowSharp (p.sharp) ? zero : eqGains[(size_t) work.chain], spaceGains[(size_t) work.chain],
                            transferWeights[(size_t) work.chain], p.spaceMode, p.panSign);
     }
 

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FreqFreaks contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "BandViews.h"
+#include "ff/Biquad.h"
 
 namespace ff
 {
@@ -84,6 +85,17 @@ void SpectrumView::setData (const bus::TrackData& ownData, juce::Colour ownCol,
         std::copy (std::begin (ownData.spaceBells), std::end (ownData.spaceBells), spaceGains.begin());
         bank->cutCurve (spaceGains, waveHz.data(), spaceCut.data(), kWavePoints);
         bank->cutCurve (eqGains, waveHz.data(), eqCut.data(), kWavePoints);
+
+        // Narrow Sharp mode: the moving bells belong to the EQ layer.
+        for (int k = 0; k < kNumPeaks; ++k)
+        {
+            if (ownData.peakDb[k] <= 1.0e-3f)
+                continue;
+            const auto c = BiquadCoeffs::peaking (bank->sampleRate(), juce::jmin ((double) ownData.peakHz[k], bank->sampleRate() * 0.45),
+                                                  juce::jmax (0.3f, ownData.peakQ[k]), -ownData.peakDb[k]);
+            for (int i = 0; i < kWavePoints; ++i)
+                eqCut[(size_t) i] -= (float) c.magnitudeDb (juce::jmin ((double) waveHz[(size_t) i], bank->sampleRate() * 0.49), bank->sampleRate());
+        }
 
         // Peak line: follows rises at once, falls about 4 dB per second (called ~30 times a second).
         for (int i = 0; i < kWavePoints; ++i)

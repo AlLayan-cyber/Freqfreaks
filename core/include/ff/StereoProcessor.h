@@ -14,6 +14,18 @@ namespace ff
 
 enum class SpaceMode { spread = 0, panAway = 1, decorrelate = 2 };
 
+/** Narrow Sharp mode: up to this many moving narrow EQ bells, placed on the conflicts. */
+constexpr int kNumPeaks = 8;
+
+/** One moving narrow bell: centre, cut (positive dB) and Q. A cut of 0 = unused. */
+struct PeakBell
+{
+    float hz = 1000.0f;
+    float cutDb = 0.0f;
+    float q = 4.0f;
+};
+using PeakArray = std::array<PeakBell, kNumPeaks>;
+
 /** What the track's output carries: the processed sound, or what was taken away
     (Delta: everything, only the EQ part, only the Space part), or the input itself. */
 enum class Listen { normal = 0, deltaAll = 1, deltaEq = 2, deltaSpace = 3, input = 4 };
@@ -67,6 +79,11 @@ public:
     void setTargets (const BellArray& eqCutDb, const BellArray& spaceCutDb, const BellArray& transferWeights,
                      SpaceMode mode, float panSign) noexcept;
 
+    /** Narrow bells on top of the EQ bells. Cuts glide like the others; a bell's centre
+        glides too (in octaves, ~60 ms), so following a moving conflict never clicks. */
+    void setPeaks (const PeakArray& peaks) noexcept      { peakTarget = peaks; }
+    const PeakArray& currentPeaks() const noexcept      { return peakNow; }
+
     void process (float* left, float* right, int numSamples) noexcept;
 
     const BellArray& currentEqCut() const noexcept     { return eqNow; }
@@ -96,6 +113,14 @@ private:
     // A bell at 0 dB is skipped entirely: bit-exact pass-through and less CPU.
     std::array<bool, kNumBells> eqActive {}, spaceActive {}, transferActive {};
     std::array<BiquadState, kNumBells> eqLeft {}, eqRight {}, spaceMid {}, transferBand {};
+
+    PeakArray peakTarget {}, peakNow {};
+    std::array<BiquadCoeffs, kNumPeaks> peakCoeffs {};
+    std::array<bool, kNumPeaks> peakActive {};
+    std::array<BiquadState, kNumPeaks> peakLeft {}, peakRight {};
+    float hzCoeff = 0.9f;
+    bool anyPeak = false;
+    void updatePeaks() noexcept;
 };
 
 } // namespace ff

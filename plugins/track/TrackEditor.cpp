@@ -4,6 +4,7 @@
 #include "TrackEditor.h"
 #include "../common/ScalingEditor.h"
 #include "../common/Brand.h"
+#include "../common/AboutPanel.h"
 
 namespace ff
 {
@@ -271,10 +272,11 @@ TrackEditor::TrackEditor (TrackProcessor& p)
     sharpKnob.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
     sharpKnob.setColour (juce::Slider::rotarySliderFillColourId, theme::eq);
     sharpKnob.setDoubleClickReturnValue (true, 0.0);
-    sharpKnob.setTooltip (help ("Sharp", "Насколько узко вырезать. 0% — как раньше: 16 широких полос, музыкально и незаметно. "
-                                         "Вверх — полосы уже (до 1/3 октавы, 32 полосы): точнее, только конфликтные места, "
-                                         "но может звучать резче. Двойной клик — 0%."));
+    sharpKnob.setTooltip (help ("Sharp", "0% — как раньше: широкие полосы, музыкально. До 50% — полосы уже (до 1/3 октавы). "
+                                         "Выше 50% — узкий режим: до 8 узких колоколов встают точно на конфликты "
+                                         "(Q 4…16, как у Soothe/Pro-Q). Точнее, но может звучать резче. Двойной клик — 0%."));
     addAndMakeVisible (sharpKnob);
+    addChildComponent (rangeView);
     sharpAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, trackParams::sharp, sharpKnob);
 
     addAndMakeVisible (spectrum);
@@ -445,7 +447,13 @@ void TrackEditor::applyLevel (int level)
     spectrum.setVisible (level >= 1);
     timing.setVisible (level >= 1);
     sharpKnob.setVisible (level >= 1);
-    for (auto* row : { &eqDepth, &rangeLow, &rangeHigh, &bassMono, &monoSafety, &sensitivity })
+    rangeView.setVisible (level == 2);
+    for (auto* row : { &rangeLow, &rangeHigh, &bassMono })   // replaced by the mini-EQ
+    {
+        row->label.setVisible (false);
+        row->slider.setVisible (false);
+    }
+    for (auto* row : { &eqDepth, &monoSafety, &sensitivity })
     {
         row->label.setVisible (level == 2);
         row->slider.setVisible (level == 2);
@@ -572,7 +580,7 @@ void TrackEditor::resized()
     const int level = processor.uiLevel();
     if (level == 2)
     {
-        drawer = r.removeFromBottom (132);
+        drawer = r.removeFromBottom (150);
         r.removeFromBottom (16);
     }
     else
@@ -648,8 +656,19 @@ void TrackEditor::resized()
                 row->slider.setBounds (line);
             }
         };
-        place (eqCard, { &eqDepth, &rangeLow, &rangeHigh });
-        place (spaceCard, { &bassMono, &monoSafety });
+        // Frequencies: one card over the EQ and Space columns, the mini-EQ on top, the two
+        // depth sliders under it.
+        freqCard = eqCard.getUnion (spaceCard);
+        auto inner = freqCard.reduced (14, 10).withTrimmedTop (24);
+        rangeView.setBounds (inner.removeFromTop (74));
+        inner.removeFromTop (8);
+        auto line = inner.removeFromTop (28);
+        auto left = line.removeFromLeft (line.getWidth() / 2 - 8);
+        line.removeFromLeft (16);
+        eqDepth.label.setBounds (left.removeFromLeft (96));
+        eqDepth.slider.setBounds (left);
+        monoSafety.label.setBounds (line.removeFromLeft (96));
+        monoSafety.slider.setBounds (line);
         place (detectCard, { &sensitivity });
     }
 }
@@ -657,7 +676,7 @@ void TrackEditor::resized()
 void TrackEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
-    brand::drawFooter (g, footer, "FreqFreaks Track");
+    brand::drawFooter (g, footer, "FreqFreaks Track v" + AboutPanel::version() + "  ·  GPLv3");
 
     // Header.
     g.setColour (theme::headerBg);
@@ -719,9 +738,12 @@ void TrackEditor::paint (juce::Graphics& g)
         // "Sharp 40 % · Q 2.8", or "Sharp 0 % · как раньше".
         const float sharp = processor.state().getRawParameterValue (trackParams::sharp)->load();
         const int step = sharpStepFor (sharp / 100.0f);
+        const bool narrow = isNarrowSharp (sharp / 100.0f);
         const juce::String sharpText = "Sharp " + juce::String (juce::roundToInt (sharp)) + " %  "
-            + (step == 0 ? u8 ("· как раньше") : u8 ("· Q ") + juce::String (processor.bellBank (step).q (0), 1)
-                                                  + u8 (" · полос ") + juce::String (bellsForStep (step)));
+            + (step == 0 ? u8 ("· как раньше")
+               : narrow ? u8 ("· узко, Q ") + juce::String (narrowQFor (sharp / 100.0f), 1) + u8 (" · на конфликтах")
+                        : u8 ("· Q ") + juce::String (processor.bellBank (step).q (0), 1)
+                              + u8 (" · полос ") + juce::String (bellsForStep (step)));
         g.setColour (step == 0 ? theme::textDim : theme::eq);
         g.drawText (sharpText, sharpKnob.getX() - 214, spectrumCard.getY() + 12, 208, 22, juce::Justification::centredRight);
     }
@@ -856,8 +878,7 @@ void TrackEditor::paint (juce::Graphics& g)
             g.setFont (theme::font (13.0f, true));
             g.drawText (text, card.reduced (14, 10).removeFromTop (20), juce::Justification::centredLeft);
         };
-        title (eqCard, theme::eq, "EQ");
-        title (spaceCard, theme::space, "Space");
+        title (freqCard, theme::eq, u8 ("Частоты · EQ и Space"));
         title (detectCard, theme::textDim, u8 ("Обнаружение"));
         g.setColour (theme::textDim);
         g.setFont (theme::font (12.0f));

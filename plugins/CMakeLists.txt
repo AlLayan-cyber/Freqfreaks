@@ -8,10 +8,17 @@ if (UNIX AND NOT APPLE)
     list (APPEND FREQFREAKS_FORMATS LV2)
 endif()
 
+# The licence text, shown in the About panel.
+juce_add_binary_data (FreqFreaksLicence
+    HEADER_NAME FreqFreaksLicence.h
+    NAMESPACE FreqFreaksLicence
+    SOURCES ${PROJECT_SOURCE_DIR}/LICENSE)
+
 set (FREQFREAKS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/common/BandViews.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/common/LookAndFeel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/common/ScalingEditor.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/common/ScalingEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/common/AboutPanel.cpp)
 
 function (freqfreaks_configure target)
     target_compile_definitions (${target} PUBLIC
@@ -23,6 +30,7 @@ function (freqfreaks_configure target)
     target_link_libraries (${target}
         PRIVATE
             freqfreaks_core
+            FreqFreaksLicence
             juce::juce_audio_utils
             juce::juce_dsp
         PUBLIC
@@ -55,6 +63,7 @@ target_sources (FreqFreaksTrack PRIVATE
     track/TrackEditor.cpp
     track/TimingKnob.cpp
     track/HostTrackInfo.cpp
+    track/RangeView.cpp
     ${FREQFREAKS_COMMON_SOURCES})
 freqfreaks_configure (FreqFreaksTrack)
 
