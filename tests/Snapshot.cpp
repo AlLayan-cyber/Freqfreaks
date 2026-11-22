@@ -88,6 +88,15 @@ int main (int argc, char** argv)
     Voice pad ("Пэд", 0xffc4b5fd, 3, 600.0, 0.5, 0.09f, 0.25f);
     Voice bass ("Бас", 0xffa3e635, 4, 90.0, 0.9, 0.22f, 0.0f);
     Voice kick ("Бочка", 0xff94a3b8, 5, 65.0, 1.2, 0.22f, 0.0f);
+    // A bigger session, so the Hub's list has to scroll.
+    std::vector<std::unique_ptr<Voice>> more;
+    const char* extraNames[] = { "Гитара R", "Клавиши", "Синт лид", "Бэк-вокал", "Перкуссия", "Струнные", "Хэт", "Малый" };
+    for (int i = 0; i < 8; ++i)
+        more.push_back (std::make_unique<Voice> (extraNames[i], 0xff38bdf8u + (juce::uint32) i * 0x00102030u, 10u + (unsigned) i,
+                                                 300.0 * (1 + i), 0.6, 0.05f, 0.1f));
+    for (int i = 0; i < 4; ++i)
+        more[(size_t) i]->yieldTo (vocal);
+
     guitarL.yieldTo (vocal);
     pad.yieldTo (vocal);
     bass.yieldTo (kick);
@@ -116,6 +125,8 @@ int main (int argc, char** argv)
         juce::AudioBuffer<float> mix (2, kBlock);
         mix.clear();
         for (auto* v : { &vocal, &guitarL, &pad, &bass, &kick })
+            v->process (mix);
+        for (auto& v : more)
             v->process (mix);
         hub.processBlock (mix, midi);
     }
@@ -149,6 +160,8 @@ int main (int argc, char** argv)
         juce::AudioBuffer<float> mix (2, kBlock);
         mix.clear();
         for (auto* v : { &vocal, &guitarL, &pad, &bass, &kick })
+            v->process (mix);
+        for (auto& v : more)
             v->process (mix);
         hub.processBlock (mix, midi);
     }

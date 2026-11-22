@@ -24,7 +24,7 @@ namespace ff
 namespace bus
 {
     constexpr std::uint32_t kMagic   = 0x46524551;   // "FREQ"
-    constexpr std::uint32_t kVersion = 5;   // bump on any layout change
+    constexpr std::uint32_t kVersion = 6;   // bump on any layout change
     constexpr int kMaxSlots = 64;
     constexpr int kNameLength = 48;
     constexpr int kMaxReferences = 4;
@@ -60,6 +60,8 @@ namespace bus
         float peakDb[kNumPeaks] {};
         float peakQ[kNumPeaks] {};
         float fineMidDb[kFineBands] {};                 // fine spectrum, for tracks that yield to this one
+        float eqDepthDb = 6.0f;                         // the track's limits, for the Hub's diagnosis
+        float bassMonoHz = 150.0f;
         std::uint32_t listen = 0;                       // monitoring (ff::Listen), 0 = normal
     };
 

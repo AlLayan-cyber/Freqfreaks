@@ -346,7 +346,14 @@ void IssuePanel::paint (juce::Graphics& g)
     for (size_t i = 0; i < issues.size(); ++i)
     {
         const auto& is = issues[i];
-        auto box = area.removeFromTop (86);
+        // Height from the text itself, so a long advice is not squeezed into a tiny font.
+        juce::GlyphArrangement titleLines, hintLines;
+        const float textW = (float) (area.getWidth() - 24 - 14);
+        titleLines.addJustifiedText (theme::font (13.0f, true), is.title, 0.0f, 0.0f, textW, juce::Justification::topLeft);
+        hintLines.addJustifiedText (theme::font (11.5f), is.hint, 0.0f, 0.0f, textW, juce::Justification::topLeft);
+        const int titleH = juce::roundToInt (titleLines.getBoundingBox (0, -1, true).getHeight()) + 6;
+        const int hintH = juce::roundToInt (hintLines.getBoundingBox (0, -1, true).getHeight()) + 2;
+        auto box = area.removeFromTop (20 + titleH + hintH);
         area.removeFromTop (8);
         if (box.getBottom() > getHeight() - 8)
             break;
@@ -364,10 +371,10 @@ void IssuePanel::paint (juce::Graphics& g)
 
         g.setColour (theme::text);
         g.setFont (theme::font (13.0f, true));
-        g.drawFittedText (is.title, inner.removeFromTop (36), juce::Justification::topLeft, 2);
+        g.drawFittedText (is.title, inner.removeFromTop (titleH), juce::Justification::topLeft, 4, 1.0f);
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
-        g.drawFittedText (is.hint, inner, juce::Justification::topLeft, 3);
+        g.drawFittedText (is.hint, inner, juce::Justification::topLeft, 10, 1.0f);
     }
 }
 
@@ -410,9 +417,19 @@ TrackRow::TrackRow (HubProcessor& p, std::uint64_t id) : processor (p), trackId 
     addAndMakeVisible (bypass);
 }
 
-void TrackRow::update (const HubTrack& t)
+void TrackRow::setCompact (bool c)
+{
+    if (compact == c)
+        return;
+    compact = c;
+    resized();
+    repaint();
+}
+
+void TrackRow::update (const HubTrack& t, bool isProblem)
 {
     track = t;
+    problem = isProblem;
     if (! trim.isMouseButtonDown())
         trim.setValue (processor.trimFor (trackId) * 100.0f, juce::dontSendNotification);
     bypass.setToggleState (processor.isTrackBypassed (trackId), juce::dontSendNotification);
@@ -423,9 +440,21 @@ void TrackRow::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
     g.setColour (theme::panel);
-    g.fillRoundedRectangle (r, 9.0f);
-    g.setColour (theme::border);
-    g.drawRoundedRectangle (r.reduced (0.5f), 9.0f, 1.0f);
+    g.fillRoundedRectangle (r, compact ? 6.0f : 9.0f);
+    g.setColour (problem ? theme::conflict.withAlpha (0.6f) : theme::border);
+    g.drawRoundedRectangle (r.reduced (0.5f), compact ? 6.0f : 9.0f, 1.0f);
+
+    if (compact)
+    {
+        auto line = getLocalBounds().reduced (8, 0);
+        g.setColour (track.colour);
+        g.fillEllipse ((float) line.getX(), (float) line.getCentreY() - 4.0f, 8.0f, 8.0f);
+        line.removeFromLeft (14);
+        g.setColour (theme::text);
+        g.setFont (theme::font (12.0f, true));
+        g.drawText (track.name, line.withWidth (78), juce::Justification::centredLeft, true);
+        return;
+    }
 
     auto top = getLocalBounds().reduced (10, 6).removeFromTop (34);
     g.setColour (track.colour);
@@ -442,13 +471,22 @@ void TrackRow::paint (juce::Graphics& g)
         sub = u8 ("референс");
     else
         sub = u8 ("→ ") + track.referenceName + u8 (" · ") + juce::String (juce::roundToInt (track.data.amount * 100.0f)) + "%";
-    g.setColour (theme::textDim);
+    g.setColour (problem ? theme::conflict : theme::textDim);
     g.setFont (theme::font (11.0f));
     g.drawText (sub, top, juce::Justification::centredLeft, true);
 }
 
 void TrackRow::resized()
 {
+    if (compact)
+    {
+        auto r = getLocalBounds().reduced (8, 6);
+        r.removeFromLeft (14 + 80);
+        bypass.setBounds (r.removeFromRight (52));
+        r.removeFromRight (4);
+        trim.setBounds (r);
+        return;
+    }
     auto r = getLocalBounds().reduced (10, 6);
     r.removeFromTop (36);
     bypass.setBounds (r.removeFromRight (58).withHeight (22));
@@ -654,6 +692,28 @@ HubEditor::HubEditor (HubProcessor& p)
     resetTrims.onClick = [this] { processor.resetTrims(); timerCallback(); };
     addAndMakeVisible (resetTrims);
 
+    rowsView.setViewedComponent (&rowsHolder, false);
+    rowsView.setScrollBarsShown (true, false);
+    rowsView.setScrollBarThickness (8);
+    rowsView.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::never);
+    rowsView.getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, theme::borderLight);
+    rowsView.getVerticalScrollBar().setColour (juce::ScrollBar::trackColourId, theme::panelDeep);
+    addAndMakeVisible (rowsView);
+
+    compactButton.setButtonText (u8 ("Компактно"));
+    compactButton.setClickingTogglesState (true);
+    compactButton.setColour (juce::TextButton::buttonOnColourId, theme::space.withAlpha (0.14f));
+    compactButton.setColour (juce::TextButton::textColourOnId, theme::space);
+    compactButton.setColour (juce::ComboBox::outlineColourId, theme::borderLight);
+    compactButton.setTooltip (u8 ("Строки в одну линию: больше дорожек на экране"));
+    compactButton.onClick = [this] {
+        compact = compactButton.getToggleState();
+        for (auto& r : rows)
+            r->setCompact (compact);
+        layoutRows();
+    };
+    addAndMakeVisible (compactButton);
+
     addChildComponent (remote);
     remote.sendLookAndFeelChange();
     remote.onClose = [this] { remote.setVisible (false); };
@@ -690,6 +750,7 @@ HubEditor::HubEditor (HubProcessor& p)
 HubEditor::~HubEditor()
 {
     stopTimer();
+    rows.clear();   // the rows live in rowsHolder: delete them while it still exists
     setLookAndFeel (nullptr);
 }
 
@@ -730,37 +791,87 @@ std::vector<HubIssue> HubEditor::diagnose (const std::vector<HubTrack>& list) co
             continue;
         }
 
-        // Longest run of unresolved bands.
-        int bestFrom = -1, bestTo = -1, from = -1;
-        float worst = 0.0f;
-        for (int b = 0; b <= kNumBands; ++b)
-        {
-            const bool bad = b < kNumBands && d.restDb[b] > 0.25f;
-            if (bad && from < 0)
-                from = b;
-            if (! bad && from >= 0)
+        // Rules, in words:
+        //  - Less than 2 dB missing is not a conflict anyone hears: say nothing.
+        //  - Look at the price: how much the yielding track already gives in those bands.
+        //    If it gives a lot (EQ at its Depth, or 6 dB and more), pushing harder would make it
+        //    disappear: advise to ease off and separate the two by hand instead.
+        //  - Below Bass Mono only EQ works: never suggest Space or Mono Safety there.
+        //  - A track that gives 9 dB or more, even with nothing missing, is flagged: too much.
+        auto runOf = [&] (auto&& isBad, int& outFrom, int& outTo) {
+            int from = -1;
+            outFrom = outTo = -1;
+            for (int b = 0; b <= kNumBands; ++b)
             {
-                if (bestFrom < 0 || b - 1 - from > bestTo - bestFrom)
-                    bestFrom = from, bestTo = b - 1;
-                from = -1;
+                const bool bad = b < kNumBands && isBad (b);
+                if (bad && from < 0)
+                    from = b;
+                if (! bad && from >= 0)
+                {
+                    if (outFrom < 0 || b - 1 - from > outTo - outFrom)
+                        outFrom = from, outTo = b - 1;
+                    from = -1;
+                }
             }
-            if (bad)
-                worst = juce::jmax (worst, d.restDb[b]);
-        }
+            return outFrom >= 0;
+        };
+        auto bandsText = [&] (int from, int to) {
+            return hzText (layout.centreHz[(size_t) from]) + u8 ("–") + hzText (layout.centreHz[(size_t) to]);
+        };
 
-        if (bestFrom >= 0)
+        int bestFrom = -1, bestTo = -1;
+        const bool missing = runOf ([&] (int b) { return d.restDb[b] > 2.0f; }, bestFrom, bestTo);
+
+        if (missing)
         {
+            float worst = 0.0f, given = 0.0f, eqGiven = 0.0f;
+            for (int b = bestFrom; b <= bestTo; ++b)
+            {
+                worst = juce::jmax (worst, d.restDb[b]);
+                given = juce::jmax (given, d.eqDb[b] + d.spaceDb[b]);
+                eqGiven = juce::jmax (eqGiven, d.eqDb[b]);
+            }
+            const bool atLimit = eqGiven >= d.eqDepthDb - 0.5f || given >= 6.0f;
+            const bool belowBassMono = layout.centreHz[(size_t) bestTo] < d.bassMonoHz;
+            const auto price = u8 ("«") + tr.name + u8 ("» сейчас уступает ") + dbText (given) + ". ";
+
             HubIssue is;
             is.trackIndex = (int) t;
             is.bandFrom = bestFrom;
             is.bandTo = bestTo;
-            is.severe = worst > 2.0f;
-            is.title = tr.referenceName + u8 (" тонет под «") + tr.name + u8 ("» на ")
-                       + hzText (layout.centreHz[(size_t) bestFrom]) + u8 ("–") + hzText (layout.centreHz[(size_t) bestTo]);
-            if ((d.flags & bus::flagLinkOff) != 0)
-                is.hint = u8 ("Не хватает до ") + dbText (worst) + u8 (". На треке выключен Link — включи, и EQ доберёт остаток.");
+            is.severe = worst > 4.0f || atLimit;
+            is.title = tr.referenceName + u8 (" тонет под «") + tr.name + u8 ("» на ") + bandsText (bestFrom, bestTo);
+            if (atLimit)
+                is.hint = price + u8 ("Давить сильнее не стоит — «") + tr.name + u8 ("» потеряется в этих частотах. "
+                          "Лучше ослабь Amount на нём и разведи их вручную: дай каждому свою частоту "
+                          "или реши, кто здесь главный. Не хватает ещё ") + dbText (worst) + ".";
+            else if ((d.flags & bus::flagLinkOff) != 0)
+                is.hint = price + u8 ("Не хватает ") + dbText (worst) + u8 (". На треке выключен Link — включи, и EQ доберёт остаток.");
+            else if (belowBassMono)
+                is.hint = price + u8 ("Не хватает ") + dbText (worst) + u8 (". Ниже Bass Mono работает только EQ: можно чуть поднять "
+                          "Amount или EQ Depth на «") + tr.name + u8 ("».");
             else
-                is.hint = u8 ("Не хватает до ") + dbText (worst) + u8 (". Подними EQ Depth или Mono Safety на треке, либо Space Amount здесь.");
+                is.hint = price + u8 ("Не хватает ") + dbText (worst) + u8 (". Можно чуть поднять Amount или EQ Depth на «")
+                          + tr.name + u8 ("», либо Space Amount здесь.");
+            out.push_back (is);
+            continue;
+        }
+
+        // Nothing missing, but is the track giving away too much?
+        int muchFrom = -1, muchTo = -1;
+        if (runOf ([&] (int b) { return d.eqDb[b] + d.spaceDb[b] >= 9.0f; }, muchFrom, muchTo))
+        {
+            float given = 0.0f;
+            for (int b = muchFrom; b <= muchTo; ++b)
+                given = juce::jmax (given, d.eqDb[b] + d.spaceDb[b]);
+            HubIssue is;
+            is.trackIndex = (int) t;
+            is.bandFrom = muchFrom;
+            is.bandTo = muchTo;
+            is.severe = false;
+            is.title = u8 ("«") + tr.name + u8 ("» уступает много на ") + bandsText (muchFrom, muchTo);
+            is.hint = u8 ("Уже ") + dbText (given) + u8 (". Проверь на слух, не пропадает ли «") + tr.name
+                      + u8 ("»; если да — ослабь Amount на нём или трим здесь.");
             out.push_back (is);
         }
     }
@@ -819,26 +930,68 @@ void HubEditor::openRemote (std::uint64_t trackId)
 
 void HubEditor::rebuildRows()
 {
-    bool same = rows.size() == tracks.size();
-    for (size_t i = 0; same && i < rows.size(); ++i)
-        same = rows[i]->id() == tracks[i].id;
+    // Display order: tracks with a real problem first (they need attention), then by name.
+    // Rows are kept per track id, so a row being dragged is never recreated.
+    const auto list = diagnose (tracks);
+    std::vector<bool> problem (tracks.size(), false);
+    for (const auto& is : list)
+        if (is.trackIndex >= 0 && is.severe)
+            problem[(size_t) is.trackIndex] = true;
 
-    if (! same)
+    std::vector<size_t> order (tracks.size());
+    for (size_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    std::stable_sort (order.begin(), order.end(), [&] (size_t a, size_t b) { return problem[a] && ! problem[b]; });
+
+    // Don't shuffle the list under the mouse: while a trim is dragged, only update values.
+    if (juce::Desktop::getInstance().getMainMouseSource().isDragging() && rowsHolder.isMouseOverOrDragging (true))
     {
-        rows.clear();
-        for (const auto& t : tracks)
+        for (auto& r : rows)
+            for (size_t i = 0; i < tracks.size(); ++i)
+                if (tracks[i].id == r->id())
+                    r->update (tracks[i], problem[i]);
+        return;
+    }
+
+    std::vector<std::unique_ptr<TrackRow>> next;
+    bool changed = rows.size() != tracks.size();
+    for (size_t k = 0; k < order.size(); ++k)
+    {
+        const auto& t = tracks[order[k]];
+        auto found = std::find_if (rows.begin(), rows.end(), [&] (const auto& r) { return r != nullptr && r->id() == t.id; });
+        if (found != rows.end())
+        {
+            changed = changed || (found - rows.begin()) != (std::ptrdiff_t) k;
+            next.push_back (std::move (*found));
+        }
+        else
         {
             auto row = std::make_unique<TrackRow> (processor, t.id);
             row->onOpen = [this] (std::uint64_t id) { openRemote (id); };
-            addAndMakeVisible (*row);
+            rowsHolder.addAndMakeVisible (*row);
             row->sendLookAndFeelChange();   // created before it had our look: rebuild its text boxes
-            rows.push_back (std::move (row));
+            next.push_back (std::move (row));
+            changed = true;
         }
-        resized();
+        next.back()->setCompact (compact);
+        next.back()->update (t, problem[order[k]]);
     }
+    rows = std::move (next);   // rows of tracks that are gone are deleted here
+    if (changed)
+        layoutRows();
+}
 
-    for (size_t i = 0; i < rows.size(); ++i)
-        rows[i]->update (tracks[i]);
+void HubEditor::layoutRows()
+{
+    const int h = TrackRow::heightFor (compact), gap = compact ? 4 : 6;
+    const int width = rowsView.getWidth() - (rows.size() * (size_t) (h + gap) > (size_t) rowsView.getHeight() ? 10 : 0);
+    int y = 0;
+    for (auto& row : rows)
+    {
+        row->setBounds (0, y, juce::jmax (0, width), h);
+        y += h + gap;
+    }
+    rowsHolder.setSize (juce::jmax (0, width), juce::jmax (0, y - gap));
 }
 
 void HubEditor::resized()
@@ -856,16 +1009,12 @@ void HubEditor::resized()
     sidebar = r.removeFromLeft (236);
     {
         auto s = sidebar.reduced (14, 16);
+        compactButton.setBounds (s.getRight() - 84, s.getY(), 84, 22);
         s.removeFromTop (30 + (processor.isDuplicate() ? 40 : 0));
         resetTrims.setBounds (s.removeFromBottom (28));
         s.removeFromBottom (30);
-        for (auto& row : rows)
-        {
-            auto rb = s.removeFromTop (70);
-            s.removeFromTop (6);
-            row->setVisible (rb.getBottom() <= s.getBottom() + 76);
-            row->setBounds (rb);
-        }
+        rowsView.setBounds (s);
+        layoutRows();
     }
     rightPanel = r.removeFromRight (330);
     issues.setBounds (rightPanel);

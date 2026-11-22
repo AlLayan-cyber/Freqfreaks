@@ -76,8 +76,12 @@ public:
     TrackRow (HubProcessor&, std::uint64_t trackId);
 
     std::uint64_t id() const noexcept    { return trackId; }
-    void update (const HubTrack&);
+    void update (const HubTrack&, bool problem);
     std::function<void (std::uint64_t)> onOpen;
+
+    /** One line (name, trim, bypass) instead of two. */
+    void setCompact (bool);
+    static int heightFor (bool compact) noexcept   { return compact ? 34 : 70; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -87,6 +91,7 @@ private:
     HubProcessor& processor;
     std::uint64_t trackId;
     HubTrack track;
+    bool compact = false, problem = false;
     juce::Slider trim;
     juce::TextButton bypass { "Bypass" };
 };
@@ -150,7 +155,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> totalAttach, spaceAttach;
     juce::TextButton compareA { "A" }, compareB { "B" }, bypassAll { "Bypass" }, resetTrims;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAllAttach;
-    std::vector<std::unique_ptr<TrackRow>> rows;
+    std::vector<std::unique_ptr<TrackRow>> rows;   // in display order: problems first, then by name
+    juce::Viewport rowsView;                       // the list scrolls when it is longer than the window
+    juce::Component rowsHolder;
+    juce::TextButton compactButton;
+    bool compact = false;
+    void layoutRows();
     RemotePanel remote;
     void rebuildRows();
     juce::TextButton tabMap, tabMatrix, tabStereo;

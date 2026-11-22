@@ -345,6 +345,8 @@ void TrackProcessor::process (juce::AudioBuffer<float>& buffer, bool forceBypass
     d.spaceMode = (std::uint32_t) params.spaceMode;
     d.hubTrim = trim;
     d.sharpStep = (std::uint32_t) engine.sharpStep();
+    d.eqDepthDb = params.eqDepthDb;
+    d.bassMonoHz = params.bassMonoHz;
     for (int k = 0; k < kNumPeaks; ++k)
     {
         d.peakHz[k] = engine.peaks()[(size_t) k].hz;
