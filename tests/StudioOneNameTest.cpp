@@ -28,7 +28,7 @@ void check (bool ok, const juce::String& what)
 struct FakeStudioOne : public Presonus::IContextInfoProvider
 {
     std::u16string name = u"Вокал";   // "Вокал"
-    Steinberg::int32 rgba = (Steinberg::int32) 0xe879f9ffu;    // pink, alpha in the bottom byte
+    Steinberg::int32 rgba = (Steinberg::int32) 0xfff979e8u;    // pink e879f9: red in the lowest byte, as Studio One sends it
     int refs = 1;
 
     Steinberg::tresult PLUGIN_API queryInterface (const Steinberg::TUID iid, void** obj) override

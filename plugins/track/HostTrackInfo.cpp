@@ -59,9 +59,10 @@ bool HostTrackInfo::read (juce::String& name, juce::uint32& argb) const
     argb = 0;
     if (p->getContextInfoValue (colour, Presonus::ContextInfo::kColor) == Steinberg::kResultOk && colour != 0)
     {
-        // "int32: RGBA": red in the top byte, alpha in the bottom one.
+        // "int32: RGBA" means the bytes R, G, B, A in memory: red in the lowest byte.
+        // (Checked in Studio One: a green track read the other way round showed pink.)
         const auto c = (juce::uint32) colour;
-        argb = juce::Colour ((juce::uint8) (c >> 24), (juce::uint8) (c >> 16), (juce::uint8) (c >> 8)).getARGB();
+        argb = juce::Colour ((juce::uint8) (c & 0xff), (juce::uint8) ((c >> 8) & 0xff), (juce::uint8) ((c >> 16) & 0xff)).getARGB();
         any = true;
     }
     return any;
