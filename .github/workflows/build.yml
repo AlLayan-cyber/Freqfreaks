@@ -60,6 +60,7 @@ jobs:
           done
           rm -f dist/*.exp dist/*.lib   # MSVC import libraries, not needed by hosts
           cp LICENSE dist/LICENSE.txt   # GPLv3: the licence travels with the plug-ins
+          cp docs/FreqFreaks-manual-ru.pdf "dist/FreqFreaks - руководство.pdf"
           ls -la dist
 
       - uses: actions/upload-artifact@v4

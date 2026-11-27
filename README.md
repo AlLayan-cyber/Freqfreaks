@@ -64,6 +64,8 @@ sudo apt install libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcur
 
 ## Как пользоваться
 
+Краткое руководство со скриншотами: [docs/FreqFreaks-manual-ru.pdf](docs/FreqFreaks-manual-ru.pdf) (лежит и в каждом архиве сборки; исходник — `docs/manual/manual.html`).
+
 1. Поставь **FreqFreaks Track** на дорожки, которые должны уступать место (гитары, пэды, бас), и на референсы (вокал, бочка).
 2. На уступающей дорожке выбери в «Уступает:» трек, которому нужно освободить место.
 3. Крути **Amount** (сколько освобождать) и **Space Amount** (какую часть делает стерео-раздвижка). С включённым **Link** EQ сам добирает остаток.

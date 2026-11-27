@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>FreqFreaks — краткое руководство</title>
+<style>
+  @page { size: A4; margin: 13mm 14mm 13mm 14mm; }
+  :root { --ink:#1b2230; --dim:#5b6678; --line:#dfe4ec; --space:#13a99b; --eq:#d98a07; --red:#d94b4b; --bg:#f6f8fb; }
+  * { box-sizing: border-box; }
+  body { font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: var(--ink); font-size: 10pt; line-height: 1.4; margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 2mm; letter-spacing: -0.3px; }
+  h2 { font-size: 14pt; margin: 7mm 0 2.5mm; padding-bottom: 1.5mm; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 11.5pt; margin: 4mm 0 1.5mm; }
+  p { margin: 0 0 2mm; }
+  ul, ol { margin: 0 0 2.5mm; padding-left: 5.5mm; }
+  li { margin: 0 0 1mm; }
+  .sub { color: var(--dim); font-size: 11pt; margin-bottom: 5mm; }
+  .brand { display:flex; align-items:center; gap:3mm; color: var(--dim); font-weight: 700; letter-spacing: 1.6px; font-size: 9pt; margin-bottom: 6mm; }
+  .logo { width: 9mm; height: 9mm; }
+  .box { background: var(--bg); border: 1px solid var(--line); border-radius: 3mm; padding: 3mm 4mm; margin: 2.5mm 0 3mm; }
+  .tip { border-left: 3px solid var(--space); }
+  .warn { border-left: 3px solid var(--eq); }
+  table { width: 100%; border-collapse: collapse; margin: 1.5mm 0 3mm; font-size: 10pt; }
+  th, td { text-align: left; vertical-align: top; padding: 1.6mm 2mm; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; font-size: 9pt; text-transform: uppercase; letter-spacing: .4px; }
+  td:first-child { font-weight: 600; white-space: nowrap; width: 30%; }
+  img.shot { width: 100%; border-radius: 2mm; border: 1px solid var(--line); margin: 1.5mm 0 1mm; }
+  .cap { color: var(--dim); font-size: 9pt; margin-bottom: 3mm; }
+  .k { font-weight: 700; }
+  .space { color: var(--space); font-weight: 700; }
+  .eq { color: var(--eq); font-weight: 700; }
+  .red { color: var(--red); font-weight: 700; }
+  code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 9pt; background: #eef1f6; padding: .3mm 1.2mm; border-radius: 1mm; }
+  .page-break { break-before: page; }
+  tr, .box, img.shot, h3, li { break-inside: avoid; }
+  h2, h3 { break-after: avoid; }
+  .foot { margin-top: 8mm; color: var(--dim); font-size: 8.5pt; border-top: 1px solid var(--line); padding-top: 2.5mm; }
+</style>
+</head>
+<body>
+
+<div class="brand">
+  <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="50" cy="50" r="48" fill="#1b2230"/>
+    <rect x="25.5" y="25" width="8" height="50" rx="4" fill="#fff"/>
+    <rect x="46" y="37.5" width="8" height="25" rx="4" fill="#fff"/>
+    <rect x="62.5" y="12" width="9.5" height="76" rx="4.75" fill="#fff"/>
+  </svg>
+  MOON AUDIO ENGINEERING
+</div>
+
+<h1>FreqFreaks — краткое руководство</h1>
+<p class="sub">Версия 0.3 · бесплатно, открытый код (GPLv3) · для сведения, не для живого звука</p>
+
+<p><span class="k">Что делает.</span> FreqFreaks освобождает место в миксе: трек сам уступает частоты тому треку, который важнее
+(гитара — вокалу, бас — бочке). Без роутинга сайдчейна: экземпляры плагина видят друг друга сами.
+Освобождение двумя способами: <span class="space">Space</span> уводит мешающие частоты из центра в стороны, не теряя
+энергию, а <span class="eq">EQ</span> аккуратно вырезает остаток.</p>
+
+<ul>
+  <li><span class="k">FreqFreaks Track</span> — ставится на каждую дорожку: и на ту, что уступает, и на ту, которой уступают (референс).</li>
+  <li><span class="k">FreqFreaks Hub</span> — один на мастер: общий обзор, общие ручки, диагноз конфликтов.</li>
+</ul>
+
+<h2>1. Установка</h2>
+<table>
+  <tr><th>Система</th><th>Куда скопировать</th></tr>
+  <tr><td>Windows (VST3)</td><td><code>FreqFreaks Track.vst3</code> и <code>FreqFreaks Hub.vst3</code> → <code>C:\Program Files\Common Files\VST3</code></td></tr>
+  <tr><td>Mac (VST3)</td><td>оба <code>.vst3</code> → <code>/Library/Audio/Plug-Ins/VST3</code></td></tr>
+  <tr><td>Mac (AU, Logic)</td><td>оба <code>.component</code> → <code>/Library/Audio/Plug-Ins/Components</code></td></tr>
+</table>
+<div class="box warn">
+  <p><span class="k">Track и Hub всегда из одной сборки.</span> Если версии разные, они не видят друг друга
+  (Hub пустой, на треках «Hub не найден»).</p>
+  <p><span class="k">Mac:</span> плагин не подписан Apple. Если macOS его блокирует, один раз выполни в Терминале:<br>
+  <code>sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/FreqFreaks*</code><br>
+  (для AU — то же с папкой <code>Components</code>). Потом пересканируй плагины в DAW.</p>
+</div>
+
+<h2>2. Быстрый старт — 5 шагов</h2>
+<ol>
+  <li>Поставь <span class="k">FreqFreaks Track</span> на трек, который должен уступать (например, гитару), и на трек, которому уступают (вокал).</li>
+  <li>На гитаре в поле <span class="k">«Уступает:»</span> выбери вокал. Готово — гитара освобождает место там, где вокал её реально слышно хуже.</li>
+  <li>Крути <span class="k">Amount</span> — сколько освобождать (по умолчанию 70%). Сравнивай кнопками <span class="k">A / B</span>.</li>
+  <li><span class="k">Space Amount</span> 100% — плагин сам решает, сколько сделать стерео-раздвижкой. Меньше — больше работает EQ, 0% — только EQ.</li>
+  <li>По желанию поставь <span class="k">FreqFreaks Hub</span> на мастер, чтобы видеть весь микс и управлять всеми треками сразу.</li>
+</ol>
+<div class="box tip"><p>Начинай с настроек по умолчанию: они подобраны так, чтобы звучать незаметно. Лучший тест — переключить A/B
+и послушать, стал ли вокал разборчивее, а гитара не «провалилась».</p></div>
+
+<h2>3. FreqFreaks Track</h2>
+<img class="shot" src="../screenshots/track.png" alt="Окно FreqFreaks Track">
+<p class="cap">Окно Track в режиме Expert. Наведи мышь на любую ручку — в блоке «Подсказка» справа внизу появится, что она делает.</p>
+
+<h3>Верхняя строка</h3>
+<table>
+  <tr><td>Имя и цветная точка</td><td>Берутся из DAW (в Studio One — автоматически, и меняются при переименовании). Клик по имени — своё имя, клик по точке — свой цвет.</td></tr>
+  <tr><td>Динамик</td><td>Прослушка. Клик — <b>Delta</b>: слышно только то, что плагин убрал. Правый клик — меню: Δ только EQ, Δ только Space, вход без обработки, <b>референс</b>, <b>трек + референс</b>.</td></tr>
+  <tr><td>Уступает</td><td>Трек-референс, которому этот трек освобождает место.</td></tr>
+  <tr><td>A / B</td><td>A — без обработки (с той же задержкой), B — с обработкой.</td></tr>
+  <tr><td>Simple / Detail / Expert</td><td>Сколько показывать: только главное → плюс спектр → все настройки.</td></tr>
+</table>
+
+<h3>Главные ручки</h3>
+<table>
+  <tr><td>Amount</td><td>Сколько места освобождать. 0–100%, по умолчанию 70%.</td></tr>
+  <tr><td>Space Amount</td><td>Доля стерео-раздвижки. 100% — выбор плагина, 0% — только EQ (карточка Space в Expert бледнеет), до 200% — шире.</td></tr>
+  <tr><td>Link</td><td>EQ добирает то, что не успел Space. Обычно включён.</td></tr>
+  <tr><td>Скорость</td><td>Rider — плавно, по фразам; Duck — быстро, по нотам.</td></tr>
+  <tr><td>Атака / Релиз</td><td>Кольцо на спектре: внутри Release, ободок Attack. «auto» — следуют за Скоростью. Потяни — станут ручными, двойной клик — снова авто.</td></tr>
+  <tr><td>Sharp</td><td>Ширина вырезов. <b>0% — как задумано изначально</b>: широкие плавные полосы. До 50% — уже. Выше 50% — узкий режим: до 8 узких колоколов встают точно на конфликты (как Soothe / Pro-Q). Точнее, но может звучать резче.</td></tr>
+  <tr><td>Режим Space</td><td>Spread — в стороны; Pan Away — влево или вправо; Decorrelate — расширяет моно-источник.</td></tr>
+  <tr><td>Output · Auto · Space comp</td><td>Output — поправка ±12 дБ. Space comp держит громкость, когда крутишь Space Amount. Auto возвращает громкость, которую трек потерял от освобождения (честное A/B).</td></tr>
+</table>
+
+<h3>Графики</h3>
+<ul>
+  <li><span class="k">Спектр:</span> заливка — трек до обработки, линия — после, пунктир — референс (в цвет его дорожки). Сверху висит
+  <span class="k">волна подавления</span>: <span class="space">бирюзовое</span> — Space, <span class="eq">янтарное</span> — EQ, <span class="red">красная кромка</span> — места не хватило.</li>
+  <li><span class="k">Бюджет освобождения:</span> по каждой полосе — сколько сделал Space, сколько EQ и сколько не хватило.</li>
+</ul>
+
+<h3>Expert</h3>
+<table>
+  <tr><td>EQ · частоты</td><td>Янтарные края <b>Range</b> тянутся мышью: вне них плагин ничего не трогает (по умолчанию 60 Гц – 14 кГц). <b>Depth</b> — самый глубокий вырез EQ (по умолчанию 6 дБ).</td></tr>
+  <tr><td>Space · стерео</td><td>Бирюзовая граница <b>Bass Mono</b>: ниже неё Space не работает, низ остаётся в моно (по умолчанию 150 Гц). <b>Mono Safety</b> — сколько Space может увести из центра.</td></tr>
+  <tr><td>Чувствительность</td><td>Насколько сильно референс должен перекрываться, чтобы плагин начал уступать.</td></tr>
+</table>
+<p>Окно меняет размер за правый нижний угол (60–200%). Клик по логотипу — меню размеров и «О плагине и лицензия».</p>
+
+<div class="page-break"></div>
+<h2>4. FreqFreaks Hub</h2>
+<img class="shot" src="../screenshots/hub-map.png" alt="Окно FreqFreaks Hub">
+<p class="cap">Hub на мастере: слева уступающие треки, в центре карта маскировки, справа диагноз.</p>
+<table>
+  <tr><td>Total Amount / Space Amount</td><td>Умножают Amount и Space Amount сразу на всех треках.</td></tr>
+  <tr><td>Bypass · A / B</td><td>Выключить FreqFreaks во всём проекте / сравнить весь микс до и после.</td></tr>
+  <tr><td>Потеря в моно</td><td>Насколько тише станет микс при сведении в моно.</td></tr>
+  <tr><td>Треки (слева)</td><td>Только те, что уступают. <b>Трим</b> 0–150% — больше / меньше подавления на треке, <b>Bypass</b> — выключить его. Двойной клик — панель с ручками этого трека. Проблемные — сверху, с красной рамкой. «Компактно» — в одну строку. Список прокручивается.</td></tr>
+  <tr><td>Карта микса</td><td>Строка = трек, клетка = полоса частот. Чем ярче, тем больше освобождается; красная рамка — не хватает. Слева на строке — сколько трек отдаёт сейчас («−5 дБ»), справа — от кого.</td></tr>
+  <tr><td>Матрица · Стерео</td><td>Кто кому уступает (все треки, включая референсы) и где что стоит в стерео.</td></tr>
+  <tr><td>Диагноз</td><td>Советы по правилам. Карточка держится, пока есть проблема, и пропадает, когда всё пришло в норму. Клик по ней — покажет место на карте.</td></tr>
+</table>
+<div class="box tip"><p>Если диагноз пишет «давить сильнее не стоит» — трек уже отдаёт много. Не увеличивай Amount: лучше разведи два
+инструмента вручную (каждому — своя частота) или реши, кто главный в этом диапазоне.</p></div>
+
+<h2>5. Рецепты</h2>
+<table>
+  <tr><td>Гитары / клавиши → вокал</td><td>Amount 60–80%, Space Amount 100%, Sharp 0%. Голос выходит вперёд, инструменты уходят в стороны.</td></tr>
+  <tr><td>Бас → бочка</td><td>Amount 30–50%, Скорость ближе к Duck. Ниже Bass Mono работает только EQ — не дави сильно, иначе бас пропадёт.</td></tr>
+  <tr><td>Пэды, струнные → всё важное</td><td>Space Amount 120–150%: широкий фон, чистый центр.</td></tr>
+  <tr><td>Резкий резонанс мешает вокалу</td><td>Sharp 60–80%: узкие вырезы точно в месте конфликта.</td></tr>
+</table>
+
+<h2>6. Частые вопросы</h2>
+<table>
+  <tr><td>«Hub не найден»</td><td>Hub не стоит на мастере, или Track и Hub из разных сборок. Без Hub треки работают как обычно.</td></tr>
+  <tr><td>Нет имени трека</td><td>Кликни по имени и впиши своё. В Expert видно, что передала DAW.</td></tr>
+  <tr><td>Задержка</td><td>30 мс упреждения: плагин уступает заранее, до атаки референса. DAW компенсирует её сама.</td></tr>
+  <tr><td>Нагрузка</td><td>~1–3% одного ядра на трек при 48 кГц. Работает и на 44,1–192 кГц.</td></tr>
+  <tr><td>Звук изменился после обновления?</td><td>При Sharp 0% обработка совпадает с прежними версиями до бита — это проверяет автотест.</td></tr>
+</table>
+
+<p class="foot">FreqFreaks — Moon Audio Engineering. Бесплатно, GNU GPL v3 или новее, без гарантий. Сделано на JUCE 8 (AGPLv3).
+Исходный код: github.com/AlLayan-cyber/Freqfreaks</p>
+
+</body>
+</html>
