@@ -15,6 +15,8 @@
 
 #include "ff/Biquad.h"
 
+#include <functional>
+#include <map>
 #include <random>
 
 namespace
@@ -73,6 +75,68 @@ bool save (juce::Component& c, const juce::File& file)
     const bool ok = out.openedOk() && png.writeImageToStream (image, out);
     std::printf ("%s %s\n", ok ? "wrote" : "FAILED", file.getFullPathName().toRawUTF8());
     return ok;
+}
+/** For the manual: one picture per control of the Track window. Every control carries a
+    "Title\nexplanation" tooltip (it feeds the help block); controls with the same title
+    (the A and B buttons, the Space mode chips) share one picture. The painted captions
+    around a control (a knob's name, a row's heading) are taken in with some margin. */
+void exportControls (juce::Component& content, const juce::File& dir)
+{
+    dir.createDirectory();
+    const auto image = content.createComponentSnapshot (content.getLocalBounds(), true, 2.0f);
+    std::map<juce::String, juce::Rectangle<int>> areas;
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& c) {
+        for (auto* child : c.getChildren())
+        {
+            if (! child->isVisible())
+                continue;
+            if (auto* tip = dynamic_cast<juce::TooltipClient*> (child))
+            {
+                auto title = tip->getTooltip().upToFirstOccurrenceOf ("\n", false, false).trim();
+                if (title.startsWith (juce::String::fromUTF8 ("Режим Space")))
+                    title = juce::String::fromUTF8 ("Режим Space");
+                if (title == "Simple" || title == "Detail" || title == "Expert")
+                    title = "Simple / Detail / Expert";
+                if (title.isNotEmpty())
+                {
+                    const auto r = content.getLocalArea (child, child->getLocalBounds());
+                    auto& a = areas[title];
+                    a = a.isEmpty() ? r : a.getUnion (r);
+                }
+            }
+            walk (*child);
+        }
+    };
+    walk (content);
+
+    // Extra room (left, top, right, bottom) for captions the editor paints around a control.
+    const std::map<juce::String, std::array<int, 4>> margins {
+        { "Amount", { 14, 6, 14, 46 } }, { "Space Amount", { 14, 6, 14, 46 } },
+        { juce::String::fromUTF8 ("Скорость"), { 4, 26, 4, 24 } },
+        { "Output", { 4, 26, 4, 6 } },
+        { "Sharp", { 230, 6, 6, 6 } },
+    };
+    juce::String index;
+    int n = 0;
+    for (const auto& [title, area] : areas)
+    {
+        auto m = std::array<int, 4> { 8, 8, 8, 8 };
+        if (auto it = margins.find (title); it != margins.end())
+            m = it->second;
+        else if (title == juce::String::fromUTF8 ("Режим Space") || title.startsWith (juce::String::fromUTF8 ("Сторона")))
+            m = { 4, 26, 4, 6 };
+        const auto r = area.withTrimmedLeft (-m[0]).withTrimmedTop (-m[1]).withTrimmedRight (-m[2]).withTrimmedBottom (-m[3])
+                           .getIntersection (content.getLocalBounds());
+        const auto crop = image.getClippedImage (juce::Rectangle<int> (r.getX() * 2, r.getY() * 2, r.getWidth() * 2, r.getHeight() * 2));
+        const auto name = "control-" + juce::String (++n) + ".png";
+        juce::FileOutputStream out (dir.getChildFile (name));
+        out.setPosition (0);
+        out.truncate();
+        juce::PNGImageFormat().writeImageToStream (crop, out);
+        index << title << "\t" << name << "\n";
+    }
+    dir.getChildFile ("index.tsv").replaceWithText (index, false, false, "\n");
+    std::printf ("wrote %d control pictures\n", n);
 }
 } // namespace
 
@@ -136,6 +200,8 @@ int main (int argc, char** argv)
         auto editor = std::unique_ptr<juce::AudioProcessorEditor> (guitarL.processor->createEditor());
         editor->setSize (ff::TrackEditor::kWidth, ff::TrackEditor::kHeight);   // 100 %, whatever the screen
         ok &= save (*editor, outDir.getChildFile ("track.png"));
+        if (auto* scalingForControls = dynamic_cast<ff::ScalingEditor*> (editor.get()))
+            exportControls (scalingForControls->getContent(), outDir.getChildFile ("controls"));
 
         // The window scales as a whole: dragging the corner to 150 % keeps the layout.
         if (auto* scaling = dynamic_cast<ff::ScalingEditor*> (editor.get()))
